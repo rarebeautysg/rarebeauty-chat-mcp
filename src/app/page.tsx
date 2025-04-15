@@ -1,103 +1,139 @@
-import Image from "next/image";
+'use client';
+
+import Image from 'next/image';
+import { useChat } from 'ai/react';
+import { useEffect, useRef } from 'react';
 
 export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm/6 text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-[family-name:var(--font-geist-mono)] font-semibold">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const { messages, input, handleInputChange, handleSubmit, isLoading, error } = useChat({
+    api: '/api/chat',
+    onError: (err) => {
+      console.error('useChat Error Caught:', err);
+      console.error('Error Name:', err.name);
+      console.error('Error Message:', err.message);
+      console.error('Error Cause:', 'cause' in err ? err.cause : 'N/A');
+      console.log('Messages state on error:', messages);
+    },
+    onFinish: (message) => {
+      console.log('Chat finished:', message);
+    },
+  });
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+  // Auto scroll to bottom when new messages arrive
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  // Log when messages change
+  useEffect(() => {
+    console.log('Messages updated:', messages);
+  }, [messages]);
+
+  const handleFormSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    console.log('Submitting message:', input);
+    try {
+      await handleSubmit(e);
+    } catch (err) {
+      console.error('Error submitting message:', err);
+    }
+  };
+
+  return (
+    <div className="flex flex-col h-screen bg-gray-100">
+      {/* Chat container */}
+      <div className="flex-1 p-4 container mx-auto max-w-4xl">
+        <div className="bg-white rounded-lg shadow-lg h-full flex flex-col">
+          {/* Chat header */}
+          <div className="p-4 border-b">
+            <h2 className="text-lg font-semibold">Rare Beauty Chat</h2>
+          </div>
+
+          {/* Chat messages */}
+          <div className="flex-1 p-4 overflow-y-auto space-y-4">
+            {messages.map((message) => (
+              <div
+                key={message.id}
+                className={`flex items-start gap-2.5 ${
+                  message.role === 'user' ? 'flex-row-reverse' : ''
+                }`}
+              >
+                <div className={`relative w-8 h-8 overflow-hidden ${
+                  message.role === 'user' ? 'bg-blue-100' : 'bg-white'
+                } rounded-full flex items-center justify-center`}>
+                  {message.role === 'user' ? (
+                    <span className="text-blue-600 text-sm font-semibold">U</span>
+                  ) : (
+                    <Image
+                      src="/rb-logo.png"
+                      alt="Rare Beauty logo"
+                      width={32}
+                      height={32}
+                      className="object-contain"
+                    />
+                  )}
+                </div>
+                <div className={`flex flex-col w-full max-w-[320px] leading-1.5 ${
+                  message.role === 'user' ? 'items-end' : ''
+                }`}>
+                  <div className={`p-4 ${
+                    message.role === 'user'
+                      ? 'bg-blue-500 text-white rounded-s-xl rounded-ee-xl'
+                      : 'bg-gray-100 text-gray-900 rounded-e-xl rounded-es-xl'
+                  }`}>
+                    <p className="text-sm font-normal">{message.content}</p>
+                  </div>
+                  <span className="text-xs text-gray-500 mt-1">
+                    {message.role === 'user' ? 'You' : 'Bot'} • Just now
+                  </span>
+                </div>
+              </div>
+            ))}
+            <div ref={messagesEndRef} />
+            
+            {/* Error message */}
+            {error && (
+              <div className="p-4 bg-red-50 text-red-500 rounded-lg">
+                Error: {error.message || 'An error occurred'}
+              </div>
+            )}
+
+            {/* Loading indicator */}
+            {isLoading && (
+              <div className="flex items-center gap-2 text-gray-500">
+                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+              </div>
+            )}
+          </div>
+
+          {/* Chat input */}
+          <div className="p-4 border-t">
+            <form onSubmit={handleFormSubmit} className="flex items-center gap-2">
+              <input
+                type="text"
+                value={input}
+                onChange={handleInputChange}
+                className="flex-1 px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Type your message..."
+              />
+              <button
+                type="submit"
+                disabled={isLoading}
+                className={`px-4 py-2 bg-blue-500 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                  isLoading 
+                    ? 'opacity-50 cursor-not-allowed'
+                    : 'hover:bg-blue-600'
+                }`}
+              >
+                {isLoading ? 'Sending...' : 'Send'}
+              </button>
+            </form>
+          </div>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+      </div>
     </div>
   );
 }
