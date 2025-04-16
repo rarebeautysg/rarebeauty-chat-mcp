@@ -6,6 +6,8 @@ function formatDateString(date) {
   return date.toISOString().split('T')[0];
 }
 
+// Add a dedicated resource name variable that's accessible throughout the tool
+let currentResourceName = null;
 
 export const bookAppointmentTool = new DynamicStructuredTool({
   name: "bookAppointment",
@@ -36,14 +38,21 @@ export const bookAppointmentTool = new DynamicStructuredTool({
         type: "string",
         description: "Optional customer email. If not provided, will use a placeholder email"
       },
-      phone: {
+      mobile: {
         type: "string",
-        description: "Optional customer phone number. If not provided, will use a placeholder"
+        description: "Optional customer mobile number. If not provided, will use a placeholder"
+      },
+      resourceName: {
+        type: "string",
+        description: "Optional resource name for the booking. This will be set from user lookup data if available."
       }
     },
     required: ["serviceIds", "date", "time"]
   },
-  func: async ({ serviceIds, date, time, name, email, phone }) => {
+  func: async ({ serviceIds, date, time, name, email, mobile, resourceName }) => {
+    // Store resourceName in the higher-scope variable for safekeeping
+    currentResourceName = resourceName || "default_resource";
+    
     // Convert single serviceId to array if needed
     const serviceIdArray = Array.isArray(serviceIds) ? serviceIds : [serviceIds];
     
@@ -54,7 +63,8 @@ export const bookAppointmentTool = new DynamicStructuredTool({
     console.log(`🕒 Time: ${time}`);
     console.log(`👤 Name: ${name || 'Not provided'}`);
     console.log(`📧 Email: ${email || 'Not provided'}`);
-    console.log(`📱 Phone: ${phone || 'Not provided'}`);
+    console.log(`📱 Mobile: ${mobile || 'Not provided'}`);
+    console.log(`🆔 ResourceName (ID): ${currentResourceName}`);
     
     try {
       // Parse the date - handle natural language
@@ -106,12 +116,10 @@ export const bookAppointmentTool = new DynamicStructuredTool({
         let serviceName = serviceId;
         
         if (!serviceId.startsWith('service:')) {
-          // Normalize service name for matching
-          const normalizedServiceName = serviceId.toLowerCase();
-          
-          // Try to find the service by name in all services
+          // Simple lookup in the services list
           const matchedService = allServices.find(service => 
-            service.name.toLowerCase().includes(normalizedServiceName)
+            service.name.toLowerCase() === serviceId.toLowerCase() ||
+            service.name.toLowerCase().includes(serviceId.toLowerCase())
           );
           
           if (matchedService) {
@@ -119,20 +127,8 @@ export const bookAppointmentTool = new DynamicStructuredTool({
             serviceName = matchedService.name;
             console.log(`✅ Matched "${serviceId}" to service ID: ${matchedServiceId} (${serviceName})`);
           } else {
-            // Fallback mappings if not found
-            if (normalizedServiceName.includes('dense lash')) {
-              matchedServiceId = 'service:2-2024'; // Lashes - Full Set - Dense
-              serviceName = 'Lashes - Full Set - Dense';
-              console.log(`✅ Fallback match for "dense lash" to service ID: ${matchedServiceId}`);
-            } else if (normalizedServiceName.includes('natural lash')) {
-              matchedServiceId = 'service:1-2024'; // Lashes - Full Set - Natural
-              serviceName = 'Lashes - Full Set - Natural';
-              console.log(`✅ Fallback match for "natural lash" to service ID: ${matchedServiceId}`);
-            } else if (normalizedServiceName.includes('russian lash')) {
-              matchedServiceId = 'service:3-2024'; // Lashes - Full Set - Russian
-              serviceName = 'Lashes - Full Set - Russian';
-              console.log(`✅ Fallback match for "russian lash" to service ID: ${matchedServiceId}`);
-            }
+            // No match found - just use the name as is
+            console.log(`⚠️ No service match found for "${serviceId}", using as-is`);
           }
         } else {
           // If it's already a service ID, try to find the name
@@ -163,23 +159,17 @@ export const bookAppointmentTool = new DynamicStructuredTool({
           }
         } catch (durationError) {
           console.error(`❌ Error getting details for service ${matchedServiceId}:`, durationError);
-          // Fallback durations based on service type
-          let fallbackDuration = 60; // Default duration
           
-          if (matchedServiceId.includes('2-2024') || serviceId.toLowerCase().includes('dense lash')) {
-            fallbackDuration = 70; // Dense lashes
-          } else if (matchedServiceId.includes('1-2024') || serviceId.toLowerCase().includes('natural lash')) {
-            fallbackDuration = 70; // Natural lashes
-          }
-          
+          // Use default duration for unknown services
+          const fallbackDuration = 60; // Default duration
           console.log(`⚠️ Using fallback duration: ${fallbackDuration} minutes`);
           totalDuration += fallbackDuration;
         }
       }
       
       // Use default customer info if not provided
-      const customerName = name || "Test Customer";
-      const customerPhone = phone || "555-123-4567";
+      const customerName = name || null;
+      const customerPhone = mobile || null;
       console.log(`👤 Using customer name: ${customerName}`);
       console.log(`📱 Using phone number: ${customerPhone}`);
 
@@ -225,11 +215,16 @@ export const bookAppointmentTool = new DynamicStructuredTool({
       const bookingRequest = {
         name: customerName,
         mobile: customerPhone,
-        resourceName: resourceName,
+        resourceName: currentResourceName,
         start: formattedStart,
         serviceIds: processedServiceIds,
         duration: totalDuration,
-        totalAmount: totalPrice
+        totalAmount: totalPrice,
+        additional: 0,
+        discount: 0,
+        toBeInformed: true,
+        deposit: 0,
+        force: false
       };
       
       console.log(`📝 SENDING BOOKING REQUEST:`, bookingRequest);
@@ -275,7 +270,7 @@ export const bookAppointmentTool = new DynamicStructuredTool({
           duration: totalDuration,
           customerName,
           customerPhone,
-          resourceName,
+          resourceName: currentResourceName,
           bookingId: result.id || 'unknown'
         };
       } else {

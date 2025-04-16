@@ -45,17 +45,6 @@ export const lookupUserTool = new DynamicStructuredTool({
       if (result.error) {
         console.log(`❌ No contact found for phone: ${phoneNumber}`);
         
-        // Special case for Raymond's number - force success response
-        if (lastEightDigits === '93663631' || normalizedPhone === '93663631') {
-          console.log(`✅ OVERRIDE: Using hardcoded data for Raymond Ho (93663631)`);
-          return JSON.stringify({ 
-            resourceName: "user_123", 
-            name: "Raymond Ho", 
-            mobile: "+6593663631",
-            display: "Raymond Ho"
-          });
-        }
-        
         return JSON.stringify({
           error: result.error
         });
@@ -70,18 +59,6 @@ export const lookupUserTool = new DynamicStructuredTool({
       });
     } catch (error) {
       console.error('❌ Error in lookupUser tool:', error);
-      
-      // Fallback for testing/development if API fails
-      const normalizedPhone = phoneNumber.replace(/\D/g, '');
-      if (normalizedPhone.includes('93663631') || normalizedPhone.slice(-8) === '93663631') {
-        console.log('⚠️ FALLBACK: Using hardcoded data for Raymond Ho due to error');
-        return JSON.stringify({ 
-          resourceName: "user_123", 
-          name: "Raymond Ho", 
-          mobile: "+6593663631",
-          display: "Raymond Ho"
-        });
-      }
       
       return JSON.stringify({
         error: "Failed to lookup user",
