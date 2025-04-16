@@ -1,20 +1,33 @@
 'use client';
 
 import Image from 'next/image';
-import { useEffect, useRef, useState, useMemo } from 'react';
+import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { ChatOpenAI } from '@langchain/openai';
 import { AgentExecutor, createToolCallingAgent } from 'langchain/agents';
+import { BaseCallbackHandler } from "@langchain/core/callbacks/base";
 import { lookupUserTool } from '@/tools/lookupUser';
 import { getAvailableSlotsTool } from '@/tools/getAvailableSlots';
-import { bookAppointmentTool } from '@/tools/bookAppointment';
-import { ChatPromptTemplate } from '@langchain/core/prompts';
+import { BookAppointmentTool } from '@/tools/bookAppointment';
+import { ChatPromptTemplate,
+  MessagesPlaceholder,
+  SystemMessagePromptTemplate,
+  HumanMessagePromptTemplate } from '@langchain/core/prompts';
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { getServicesTool } from '@/tools/getServices';
 import ReactMarkdown from 'react-markdown';
 import { systemPrompt } from '@/prompts/systemPrompt';
+import { BufferMemory } from "langchain/memory";
 
 export default function Home() {
 
+  
+
+  const memory = useMemo(() => new BufferMemory({
+    returnMessages: true,
+    memoryKey: "chat_history",
+    inputKey: "input",
+    outputKey: "output"
+  }), []);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -33,88 +46,62 @@ export default function Home() {
   // Add a ref to persist userContext across re-renders
   const userContextRef = useRef<{ resourceName?: string; name?: string; mobile?: string } | null>(null);
   
+  const toolResults: any[] = [];
+
+  class CaptureToolResultHandler extends BaseCallbackHandler {
+    name = "CaptureToolResultHandler";
+   
+    
+    handleToolEnd(output: string, runId?: string, parentRunId?: string, tags?: string[]): Promise<void> | void {
+      try {
+        console.log(`🛠️ Tool output:`, output);
+        const parsedOutput = typeof output === 'string' ? JSON.parse(output) : output;
+        toolResults.push(parsedOutput);
+        
+        // Process user data from lookupUser tool results
+        try {
+          // Store the user info when lookupUser returns valid data
+          if (parsedOutput && parsedOutput.resourceName) {
+            console.log('👤 Found user data in tool result:', parsedOutput);
+            
+            // Save user data for future tool calls
+            const userInfo = {
+              resourceName: parsedOutput.resourceName,
+              name: parsedOutput.name,
+              mobile: parsedOutput.mobile,
+            };
+            
+            console.log('🔒 Stored user data for future tool calls:', userInfo);
+            
+            // Also update the React state
+            setUserContext(userInfo);
+            userContextRef.current = userInfo;
+            
+            // Log to debug any issues with resourceName
+            console.log('🔑 resourceName set to:', parsedOutput.resourceName);
+          }
+        } catch (e) {
+          // If parsing fails or data doesn't have resourceName, ignore
+          console.error('❌ Error processing tool output:', e);
+        }
+      } catch (e) {
+        // If not JSON or doesn't have resourceName, ignore
+        console.log(`⚠️ Could not parse tool output as JSON:`, e);
+        toolResults.push(output);
+      }
+    }
+  }
+  
+  // Create a persistent instance of the handler
+  const toolHandler = new CaptureToolResultHandler();
+  
   // Add debugger function that logs all important state
   const debugState = () => {
     console.log('🔍 DEBUG STATE:');
     console.log('📱 User Context State:', userContext);
-    console.log('📱 User Context Ref:', userContextRef.current);
     console.log('💬 Messages:', messages.length);
     console.log('🛠️ Executor Ready:', !!executor);
   };
-  
-  // Helper function to get the most recent user context
-  const getCurrentUserContext = () => {
-    // Prefer the ref value as it's always up-to-date
-    return userContextRef.current || userContext;
-  };
-  
-  // Update ref whenever state changes
-  useEffect(() => {
-    userContextRef.current = userContext;
-    if (userContext) {
-      console.log('🔑 USER CONTEXT UPDATED AND SAVED TO REF:', userContext);
-      console.log(`📌 PERSISTENT REFERENCE: resourceName = "${userContext.resourceName}"`);
-    }
-  }, [userContext]);
-
-  // This effect will run on mount - detect any tools that have already run from URL parameters
-  useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const mobile = urlParams.get('mobile');
-    const name = urlParams.get('name');
-    const resourceName = urlParams.get('resourceName');
-    
-    // If we have data in URL, use it to populate context
-    if (resourceName && name && mobile) {
-      console.log('📱 Found user data in URL parameters:', { resourceName, name, mobile });
-      const newUserContext = { resourceName, name, mobile };
-      setUserContext(newUserContext);
-      userContextRef.current = newUserContext;
-      console.log('🔒 Saved URL user data to context:', newUserContext);
-    }
-    
-    // Debug state on load
-    debugState();
-  }, []);
-
-  // Add periodic check to log if context is still available
-  useEffect(() => {
-    const checkInterval = setInterval(() => {
-      const context = getCurrentUserContext();
-      if (context?.resourceName) {
-        console.log('👤 User context is active:', context);
-      }
-    }, 30000); // Check every 30 seconds
-    
-    return () => clearInterval(checkInterval);
-  }, []);
-  
-  // Function to persist user data to localStorage when found
-  const persistUserData = (userData: { resourceName: string; name: string; mobile: string }) => {
-    try {
-      localStorage.setItem('rareBeautyUserData', JSON.stringify(userData));
-      console.log('💾 User data saved to localStorage');
-    } catch (e) {
-      console.error('Error saving to localStorage:', e);
-    }
-  };
-  
-  // Load persisted user data on mount
-  useEffect(() => {
-    try {
-      const savedData = localStorage.getItem('rareBeautyUserData');
-      if (savedData) {
-        const userData = JSON.parse(savedData);
-        if (userData.resourceName) {
-          console.log('📤 Loaded user data from localStorage:', userData);
-          setUserContext(userData);
-          userContextRef.current = userData;
-        }
-      }
-    } catch (e) {
-      console.error('Error loading from localStorage:', e);
-    }
-  }, []);
 
   // Handle input change
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -126,10 +113,16 @@ export default function Home() {
     const initializeExecutor = async () => {
       try {
         // 1. Create tools
+        const bookTool = new BookAppointmentTool();
+        
+        // Create a global window object that tools can access
+        // @ts-ignore
+        window.__userContext = userContextRef;
+        
         const tools = [
           lookupUserTool,
           getAvailableSlotsTool,
-          bookAppointmentTool,
+          bookTool,
           getServicesTool,
         ];
 
@@ -143,24 +136,27 @@ export default function Home() {
         // Add debug logging for API key
         console.log("API Key available:", !!process.env.NEXT_PUBLIC_OPENAI_API_KEY);
 
-        // 3. Create the agent with tool-calling support
         const prompt = ChatPromptTemplate.fromMessages([
           ["system", systemPrompt],
+          new MessagesPlaceholder("chat_history"),        // 🧠 Enables memory
           ["human", "{input}"],
-          ["system", "{agent_scratchpad}"]
+          ["system", "{agent_scratchpad}"]   // 🛠️ Enables tool output trace
         ]);
 
         const agent = await createToolCallingAgent({
           llm,
           tools,
-          prompt: prompt,
+          prompt,
         });
 
-        // 4. Create the executor
+        // Define executor instance without memory to test
         const executorInstance = new AgentExecutor({
           agent,
-          tools,
+          tools,          
+          returnIntermediateSteps: true,
+          memory  // Comment out memory to test if it's causing the input values issue
         });
+        
         setExecutor(executorInstance);
       } catch (err) {
         console.error('Error initializing executor:', err);
@@ -179,269 +175,96 @@ export default function Home() {
     console.log('Messages updated:', messages);
   }, [messages]);
 
-  // Log when userContext changes
-  useEffect(() => {
-    if (userContext) {
-      console.log('🔑 USER CONTEXT UPDATED:', userContext);
-      console.log(`📌 IMPORTANT: Current resourceName = "${userContext.resourceName}"`);
-      console.log(`👤 User name: ${userContext.name}`);
-      console.log(`📱 User mobile: ${userContext.mobile}`);
-    }
-  }, [userContext]);
-
-  // Function to extract service name from input and conversation history
-  const extractServiceFromHistory = (): string | null => {
-    // Just return null and let OpenAI handle service extraction
-    return null;
-  };
-
   // Update handleFormSubmit with better tool handling
-  const handleFormSubmit = async (e: React.FormEvent) => {
+  const handleMessageSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('Submitting message:', input);
-    
-    // Skip if input is empty
     if (!input.trim()) return;
+    if (!executor) {
+      console.error("Executor not initialized");
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
     
     // Create user message
-    const userMessage = { role: 'user', content: input };
-    
-    // Immediately display user message
+    const userMessage = {
+      role: 'user',
+      content: input,
+    };
+
+    // Add user message to the messages array
     setMessages(prevMessages => [...prevMessages, userMessage]);
+    const newMessages = [...messages, userMessage];
     
-    // Save input and clear the input field
+    // Save the current input before clearing it
     const currentInput = input;
     setInput('');
     
-    // Now start loading and process the AI response
-    setIsLoading(true);
     try {
-      if (executor) {
-        console.log("Executing with input:", currentInput);
-        
-        // Create message history string for context
-        const messageHistory = messages.map(msg => 
-          `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`
-        ).join('\n');
-        
-        // Combine history with current input to maintain context
-        const contextualInput = messageHistory ? 
-          `${messageHistory}\nUser: ${currentInput}` : 
-          currentInput;
-        
-        console.log("📝 Executing with contextual input:", contextualInput);
-        console.log(`🔑 Current user context before execution:`, getCurrentUserContext());
+      console.log("🔍 Submitting message:", currentInput);
+      
+      // Get the current user context
+      const currentUserContext = userContextRef.current;
+      console.log("👤 Current user context:", currentUserContext);
+      
+      if (!executor) {
+        throw new Error("Executor not initialized");
+      }
+      
+      // Explicitly log the current resourceName for debugging
+      let inputToUse = currentInput;
+      if (currentUserContext && currentUserContext.resourceName) {
+        console.log("📌 Using resourceName:", currentUserContext.resourceName);
+        // Ensure it's in the message to help the agent use the right value
+        inputToUse = `${currentInput} (User context: ResourceName=${currentUserContext.resourceName}, Name=${currentUserContext.name})`;
+        console.log("📝 Enhanced input:", inputToUse);
+      }
 
-        // Add timeout to prevent hanging
-        const timeoutPromise = new Promise((_, reject) => {
-          setTimeout(() => reject(new Error('Request timed out after 90 seconds')), 90000);
-        });
-        
-        // Race against timeout
-        const result = await Promise.race([
-          executor.invoke({ input: contextualInput }),
-          timeoutPromise
-        ]) as any;
-        
-        console.log('Execution result:', result);
-        
-        // Process tool calls to extract and share data between tools
-        if (result.intermediateSteps && result.intermediateSteps.length > 0) {
-          console.log(`🔄 Processing ${result.intermediateSteps.length} tool steps`);
-          
-          // First pass: Extract user data from lookupUser
-          for (const step of result.intermediateSteps) {
-            if (step.action?.tool === 'lookupUser' && step.observation) {
-              console.log('🔎 Found lookupUser step:', {
-                tool: step.action.tool,
-                input: step.action.toolInput
-              });
-              
-              try {
-                const userData = JSON.parse(step.observation);
-                if (userData && userData.resourceName) {
-                  console.log('👤 User data found:', userData);
-                  
-                  // Store in context for other tools to use
-                  const newUserContext = {
-                    resourceName: userData.resourceName,
-                    name: userData.name,
-                    mobile: userData.mobile
-                  };
-                  
-                  setUserContext(newUserContext);
-                  userContextRef.current = newUserContext;
-                  persistUserData(newUserContext);
-                  
-                  console.log('💾 User context saved and persisted');
-                }
-              } catch (e) {
-                console.error('Error parsing lookupUser result:', e);
-              }
-            }
-          }
-          
-          // Second pass: Inject user data into booking steps
-          const currentUserContext = getCurrentUserContext();
-          if (currentUserContext?.resourceName) {
-            console.log('🔑 User context available for booking:', currentUserContext);
-            
-            for (const step of result.intermediateSteps) {
-              if (step.action?.tool === 'bookAppointment' && step.action?.toolInput) {
-                // Check if we need to inject user data
-                if (!step.action.toolInput.resourceName || 
-                    step.action.toolInput.resourceName === 'default_resource') {
-                     
-                  console.log('🔄 Injecting user data into booking');
-                  
-                  // Create complete booking input with all user data
-                  const completeBookingInput = {
-                    ...step.action.toolInput,
-                    resourceName: currentUserContext.resourceName,
-                    name: currentUserContext.name,
-                    mobile: currentUserContext.mobile
-                  };
-                  
-                  // Execute the booking with complete data
-                  try {
-                    const bookingTool = executor.tools.find((tool: any) => tool.name === 'bookAppointment');
-                    if (bookingTool) {
-                      console.log('🚀 Executing booking with user data');
-                      const bookingResult = await bookingTool.call(completeBookingInput);
-                      
-                      // Update the step with the actual result
-                      step.observation = bookingResult;
-                      
-                      try {
-                        const parsedBookingResult = JSON.parse(bookingResult);
-                        if (parsedBookingResult.success) {
-                          // Remove any warning in the output about no actual booking
-                          result.output = result.output.replace(
-                            /⚠️ NOTE: No actual booking was made.[\s\S]+?complete a booking. ⚠️\n\n/g, 
-                            ''
-                          );
-                          console.log('✅ Booking successful');
-                        }
-                      } catch (e) {
-                        console.error('Error parsing booking result:', e);
-                      }
-                    }
-                  } catch (e) {
-                    console.error('Error executing booking:', e);
-                  }
-                }
-              }
-            }
-          } else {
-            console.log('⚠️ No user context available for booking');
-          }
-        }
-        
-        // Extract tool calls from the result if available
-        const toolCalls = result.intermediateSteps?.map((step: any) => {
-          return `${step.action?.tool || 'unknown'}: ${JSON.stringify(step.action?.toolInput || {})}`;
-        }) || [];
-        
-        // Check for booking tool calls specifically
-        let hasBookingCall = result.intermediateSteps?.some((step: any) => 
-          (step.action?.tool === 'bookAppointment' && step.observation && 
-           step.observation.includes('"success":true'))
-        ) || false;
-        
-        // Add only the assistant response to the messages state
-        const botMessage = { 
-          role: 'bot', 
-          content: result.output,
-          toolCalls: toolCalls.length > 0 ? toolCalls : undefined 
-        };
-        
-        setMessages(prevMessages => [...prevMessages, botMessage]);
-        
-        // Reset active tool
-        setActiveTool(null);
+      // Execute with the input (regular or enhanced with context)
+      const response = await executor.invoke(
+        { input: inputToUse },
+        { callbacks: [toolHandler] }
+      );
+      
+      // Log all the important state after execution
+      console.log("✅ Execution result:", response);
+      console.log("💬 Memory content:", memory);
+      console.log("🔍 Final userContextRef:", userContextRef.current);
+      
+      // Extract a string response, handling different result formats
+      let responseContent = "";
+      if (typeof response === 'string') {
+        responseContent = response;
+      } else if (response.output) {
+        responseContent = String(response.output);
+      } else if (response.response) {
+        responseContent = String(response.response);
       } else {
-        console.error("Executor not initialized yet");
-        setError({ message: "Chat system is still initializing. Please try again in a moment." });
+        // For complex objects, stringify the first available property
+        const firstKey = Object.keys(response)[0];
+        responseContent = firstKey ? String(response[firstKey]) : JSON.stringify(response);
       }
-    } catch (err) {
-      console.error('Error executing message:', err);
-      if (err instanceof Error) {
-        // Display a user-friendly error message
-        const errorMessage = { 
-          role: 'bot', 
-          content: `I'm sorry, I encountered an error while processing your request: ${err.message}. Please try again.` 
-        };
-        setMessages(prevMessages => [...prevMessages, errorMessage]);
-        setError({ message: err.message || 'An error occurred' });
-      } else {
-        setError({ message: 'An unknown error occurred' });
-      }
+      
+      // Add bot message to the messages array
+      const botMessage = { 
+        role: 'assistant', 
+        content: responseContent
+      };
+      
+      setMessages(prevMessages => [...prevMessages, botMessage]);
+    } catch (error) {
+      console.error("❌ Error during execution:", error);
+      const errorMessage = { 
+        role: 'assistant', 
+        content: `I'm sorry, I encountered an error: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again.` 
+      };
+      setMessages(prevMessages => [...prevMessages, errorMessage]);
+      setError({ message: error instanceof Error ? error.message : 'An unknown error occurred' });
     } finally {
       setIsLoading(false);
-      // Debug state after processing
-      debugState();
     }
   };
-
-  // Add direct user authentication function
-  const authenticateUser = async (mobileNumber: string) => {
-    if (!executor) return false;
-    
-    try {
-      console.log('🔑 Attempting to authenticate user with mobile:', mobileNumber);
-      
-      // Find the lookupUser tool
-      const lookupTool = executor.tools.find((tool: any) => tool.name === 'lookupUser');
-      if (!lookupTool) {
-        console.error('❌ lookupUser tool not found');
-        return false;
-      }
-      
-      // Call the tool directly
-      const result = await lookupTool.call({ mobile: mobileNumber });
-      console.log('📱 lookupUser direct result:', result);
-      
-      try {
-        const userData = JSON.parse(result);
-        if (userData && userData.resourceName) {
-          console.log('👤 User authenticated successfully:', userData);
-          
-          // Update context
-          const newUserContext = {
-            resourceName: userData.resourceName,
-            name: userData.name,
-            mobile: userData.mobile
-          };
-          
-          setUserContext(newUserContext);
-          userContextRef.current = newUserContext;
-          
-          // Persist data
-          persistUserData(newUserContext);
-          
-          return true;
-        }
-      } catch (e) {
-        console.error('Error parsing authentication result:', e);
-      }
-      
-      return false;
-    } catch (e) {
-      console.error('Error in direct authentication:', e);
-      return false;
-    }
-  };
-
-  // Expose authentication method to window for direct use
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      (window as any).authenticateUser = authenticateUser;
-      (window as any).getCurrentUserContext = getCurrentUserContext;
-      (window as any).debugUserContext = debugState;
-      
-      console.log('🌍 Exposed helper functions to window object');
-    }
-  }, [executor]);
 
   return (
     <div className="flex flex-col h-screen bg-gray-100">
@@ -563,7 +386,7 @@ export default function Home() {
 
           {/* Chat input */}
           <div className="p-4 border-t">
-            <form onSubmit={handleFormSubmit} className="flex items-center gap-2">
+            <form onSubmit={handleMessageSubmit} className="flex items-center gap-2">
               <input
                 type="text"
                 value={input}

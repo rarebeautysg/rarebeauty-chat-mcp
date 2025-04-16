@@ -130,8 +130,8 @@ async function createBooking(bookingDetails: BookingRequest): Promise<BookingRes
     
     // Check for GraphQL errors
     if (result.errors) {
-      const errorMessage = result.errors.map((err: any) => err.message).join('; ');
-      throw new Error(`GraphQL errors: ${errorMessage}`);
+      // const errorMessage = result.errors.map((err: any) => err.message).join('; ');
+      throw new Error(`GraphQL errors: ${JSON.stringify(result.errors, null, 2)}`);
     }
     
     if (!result.data || !result.data.createAppointment) {
@@ -145,7 +145,7 @@ async function createBooking(bookingDetails: BookingRequest): Promise<BookingRes
       success: true
     };
   } catch (error) {
-    console.error('Error creating booking:', error);
+    console.error('Error creating booking:', JSON.stringify(error, null, 2));
     throw error;
   }
 }
@@ -178,19 +178,6 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     console.error('Error in booking API route:', error);
-    
-    // Fallback for test cases if needed
-    if (request.body) {
-      const body = await request.text();
-      if (body.includes('Raymond Ho') && body.includes('service:2-2024')) {
-        return NextResponse.json({ 
-          id: "appointment_test123", 
-          createdNewContact: false,
-          success: true,
-          message: "Test appointment booked successfully"
-        });
-      }
-    }
     
     return NextResponse.json({ 
       error: 'Failed to book appointment',
