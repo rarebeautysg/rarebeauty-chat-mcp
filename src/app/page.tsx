@@ -115,10 +115,6 @@ export default function Home() {
         // 1. Create tools
         const bookTool = new BookAppointmentTool();
         
-        // Create a global window object that tools can access
-        // @ts-ignore
-        window.__userContext = userContextRef;
-        
         const tools = [
           lookupUserTool,
           getAvailableSlotsTool,
