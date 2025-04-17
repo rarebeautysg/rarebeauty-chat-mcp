@@ -78,4 +78,18 @@ The tools available to you have these EXACT names. Do not add or change any part
 - getServices - for getting service information
 - bookAppointment - for booking appointments
 - getAvailableSlots - for checking available time slots
+
+ABOUT LISTING BEAUTY SERVICES:
+- Do not repeat the category names. Just list the services with the price.
+- For Example:
+
+Lashes:
+Full Set - Dense: $75
+Full Set - Natural: $65
+Full Set - Russian: $85
+
+Facial:
+Addon Lifting: $15
+Ampoule Acne: $25
+Ampoule Hydrating: $20
 `;

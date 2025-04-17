@@ -271,6 +271,15 @@ export default function Home() {
     }
   };
 
+  // Add a custom renderer for paragraphs to add more spacing
+  const renderParagraphs = ({node, ...props}: React.HTMLAttributes<HTMLParagraphElement> & { node?: any }) => {
+    // Check if this paragraph contains a category header (like "Lashes" or "Facial")
+    const content = String(props.children || '');
+    // Check for standalone category headers that might be bolded in markdown
+    const isCategoryHeader = /^(\*\*)?(?:Lashes|Facial|Threading|Waxing|Skin)(\*\*)?$/.test(content.trim());
+    return <p className={isCategoryHeader ? "font-bold text-lg mt-4 mb-2" : "my-3"} {...props} />;
+  };
+
   return (
     <div className="flex flex-col h-screen bg-gray-100">
       {/* Chat container */}
@@ -319,20 +328,14 @@ export default function Home() {
                       <div className="text-sm font-normal markdown-content">
                         <ReactMarkdown
                           components={{
-                            p: ({node, ...props}) => {
-                              // Check if this paragraph contains a category header (like "Lashes" or "Facial")
-                              const content = String(props.children || '');
-                              // Check for standalone category headers that might be bolded in markdown
-                              const isCategoryHeader = /^(\*\*)?(?:Lashes|Facial|Threading|Waxing|Skin)(\*\*)?$/.test(content.trim());
-                              return <p className={isCategoryHeader ? "font-bold text-lg mt-4 mb-2" : "my-0"} {...props} />;
-                            },
-                            h1: ({node, ...props}) => <h1 className="text-xl font-bold mt-3 mb-1" {...props} />,
-                            h2: ({node, ...props}) => <h2 className="text-lg font-bold mt-3 mb-1" {...props} />,
-                            h3: ({node, ...props}) => <h3 className="text-md font-bold mt-2 mb-0.5" {...props} />,
-                            ul: ({node, ...props}) => <ul className="list-none pl-0 my-0" {...props} />,
-                            ol: ({node, ...props}) => <ol className="list-decimal pl-5 my-0" {...props} />,
-                            li: ({node, ...props}) => <li className="my-0" {...props} />,
-                            pre: ({node, ...props}) => <pre className="bg-gray-100 p-2 rounded my-1 overflow-x-auto" {...props} />,
+                            p: renderParagraphs,
+                            h1: ({node, ...props}) => <h1 className="text-xl font-bold mt-4 mb-2" {...props} />,
+                            h2: ({node, ...props}) => <h2 className="text-lg font-bold mt-4 mb-2" {...props} />,
+                            h3: ({node, ...props}) => <h3 className="text-md font-bold mt-3 mb-1" {...props} />,
+                            ul: ({node, ...props}) => <ul className="list-none pl-0 my-3" {...props} />,
+                            ol: ({node, ...props}) => <ol className="list-decimal pl-5 my-3" {...props} />,
+                            li: ({node, ...props}) => <li className="my-2" {...props} />,
+                            pre: ({node, ...props}) => <pre className="bg-gray-100 p-2 rounded my-3 overflow-x-auto" {...props} />,
                             strong: ({node, children, ...props}) => {
                               const content = String(children || '');
                               const isCategoryHeader = /^(?:Lashes|Facial|Threading|Waxing|Skin)$/.test(content.trim());
