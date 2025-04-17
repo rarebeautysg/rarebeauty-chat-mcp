@@ -5,15 +5,15 @@ import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { ChatOpenAI } from '@langchain/openai';
 import { AgentExecutor, createToolCallingAgent } from 'langchain/agents';
 import { BaseCallbackHandler } from "@langchain/core/callbacks/base";
-import { lookupUserTool } from '@/tools/lookupUser';
-import { getAvailableSlotsTool } from '@/tools/getAvailableSlots';
+import { LookupUserTool } from '@/tools/lookupUser';
+import { getAvailableSlotsTool as getAvailableSlots } from '@/tools/getAvailableSlots';
 import { BookAppointmentTool } from '@/tools/bookAppointment';
 import { ChatPromptTemplate,
   MessagesPlaceholder,
   SystemMessagePromptTemplate,
   HumanMessagePromptTemplate } from '@langchain/core/prompts';
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
-import { getServicesTool } from '@/tools/getServices';
+import { getServicesTool as getServices } from '@/tools/getServices';
 import ReactMarkdown from 'react-markdown';
 import { systemPrompt } from '@/prompts/systemPrompt';
 import { BufferMemory } from "langchain/memory";
@@ -35,7 +35,12 @@ export default function Home() {
 
   // Define input and messages state
   const [input, setInput] = useState('');
-  const [messages, setMessages] = useState<{ role: string; content: string; toolCalls?: string[] }[]>([]);
+  const [messages, setMessages] = useState<{ role: string; content: string; toolCalls?: string[] }[]>([
+    {
+      role: 'assistant',
+      content: 'Hello! How are you! Can I have your mobile number please? 😊'
+    }
+  ]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<{ message: string } | null>(null);
   const [activeTool, setActiveTool] = useState<string | null>(null);
@@ -112,15 +117,20 @@ export default function Home() {
   useEffect(() => {
     const initializeExecutor = async () => {
       try {
-        // 1. Create tools
-        const bookTool = new BookAppointmentTool();
+        // Create the tools properly - the problem is here
+        const lookupUser = new LookupUserTool();
+        console.log("🔧 Initialized LookupUserTool with name:", lookupUser.name);
         
+        const bookAppointment = new BookAppointmentTool();
         const tools = [
-          lookupUserTool,
-          getAvailableSlotsTool,
-          bookTool,
-          getServicesTool,
+          lookupUser,
+          getServices,
+          getAvailableSlots,
+          bookAppointment,          
         ];
+
+        // Log all tool names to debug
+        console.log("🧰 Tool names:", tools.map(tool => tool.name));
 
         // 2. Setup LLM
         const llm = new ChatOpenAI({
@@ -191,7 +201,6 @@ export default function Home() {
 
     // Add user message to the messages array
     setMessages(prevMessages => [...prevMessages, userMessage]);
-    const newMessages = [...messages, userMessage];
     
     // Save the current input before clearing it
     const currentInput = input;
@@ -225,7 +234,7 @@ export default function Home() {
       
       // Log all the important state after execution
       console.log("✅ Execution result:", response);
-      console.log("💬 Memory content:", memory);
+      // console.log("💬 Memory content:", memory);
       console.log("🔍 Final userContextRef:", userContextRef.current);
       
       // Extract a string response, handling different result formats

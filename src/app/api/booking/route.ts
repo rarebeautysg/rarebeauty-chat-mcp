@@ -126,12 +126,12 @@ async function createBooking(bookingDetails: BookingRequest): Promise<BookingRes
     }
 
     const result = await response.json();
-    console.log('Booking response data received:', result);
+    console.log('Booking response data received:', JSON.stringify(result.message, null, 2));
     
     // Check for GraphQL errors
     if (result.errors) {
       // const errorMessage = result.errors.map((err: any) => err.message).join('; ');
-      throw new Error(`GraphQL errors: ${JSON.stringify(result.errors, null, 2)}`);
+      throw new Error(`GraphQL errors: ${JSON.stringify(result.errors[0].message, null, 2)}`);
     }
     
     if (!result.data || !result.data.createAppointment) {

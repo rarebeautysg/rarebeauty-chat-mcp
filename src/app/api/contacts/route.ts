@@ -108,6 +108,7 @@ async function getContacts(): Promise<Contact[]> {
 }
 
 async function findContactByPhone(phone: string): Promise<Contact | undefined> {
+  
   const contacts = await getContacts();
   
   // Normalize input phone: remove all non-digit characters
@@ -151,18 +152,6 @@ async function findContactByPhone(phone: string): Promise<Contact | undefined> {
     return matchedContact;
   }
   
-  // 4. Last resort: handle specific test case for Raymond Ho
-  if (lastEightDigits === '93663631' || normalizedPhone === '93663631') {
-    console.log('✅ Special case match for Raymond Ho');
-    // Create a synthetic contact for Raymond
-    return {
-      name: "Raymond Ho",
-      mobile: "+6593663631",
-      display: "Raymond Ho",
-      resourceName: "user_123"
-    };
-  }
-  
   console.log('❌ No match found for this phone number after all strategies');
   return undefined;
 }
@@ -204,46 +193,12 @@ export async function POST(request: Request) {
       const normalizedPhone = phoneNumber.toString().replace(/\D/g, '');
       const lastEightDigits = normalizedPhone.slice(-8);
       
-      if (normalizedPhone === '93663631' || lastEightDigits === '93663631') {
-        console.log(`✅ Special case override for Raymond Ho (93663631)`);
-        return NextResponse.json({ 
-          resourceName: "user_123", 
-          name: "Raymond Ho", 
-          mobile: "+6593663631",
-          display: "Raymond Ho"
-        });
-      }
-      
       return NextResponse.json({
         error: "No user found with that phone number"
       }, { status: 404 });
     }
   } catch (error) {
     console.error('❌ Error in contacts API route:', error);
-    
-    // Try to inspect the request body if possible
-    let phoneFromRequest = '';
-    try {
-      const requestText = await request.text();
-      console.log('Request body (text):', requestText);
-      
-      if (requestText.includes('93663631')) {
-        phoneFromRequest = '93663631';
-      }
-    } catch (bodyError) {
-      console.error('Error extracting request body:', bodyError);
-    }
-    
-    // Fallback for the specific test case if there's an error
-    if (phoneFromRequest === '93663631' || (request.body && (await request.text()).includes('93663631'))) {
-      console.log('⚠️ Fallback response for Raymond Ho due to error');
-      return NextResponse.json({ 
-        resourceName: "user_123", 
-        name: "Raymond Ho", 
-        mobile: "+6593663631",
-        display: "Raymond Ho"
-      });
-    }
     
     return NextResponse.json({ 
       error: 'Failed to lookup user',

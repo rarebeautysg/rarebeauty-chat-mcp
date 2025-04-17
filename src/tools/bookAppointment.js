@@ -145,15 +145,7 @@ export class BookAppointmentTool extends StructuredTool {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(bookingRequest)
     });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      return JSON.stringify({
-        success: false,
-        error: `Booking API error: ${response.status} - ${errorText}`
-      });
-    }
-
+    
     const result = await response.json();
 
     if (result.success) {
