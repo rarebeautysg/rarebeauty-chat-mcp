@@ -1,157 +1,123 @@
-class ServicesDataService {
+// Mock services data for testing purposes
+const SERVICES_DATA = [
+  {
+    id: 'service:1-2024',
+    name: 'Lashes - Full Set - Natural',
+    category: 'Lashes',
+    price: '$65',
+    duration: 60
+  },
+  {
+    id: 'service:2-2024',
+    name: 'Lashes - Full Set - Dense',
+    category: 'Lashes',
+    price: '$75',
+    duration: 75
+  },
+  {
+    id: 'service:3-2024',
+    name: 'Lashes - Full Set - Russian',
+    category: 'Lashes',
+    price: '$85',
+    duration: 90
+  },
+  {
+    id: 'service:4-2024',
+    name: 'Facial - Basic Cleanse',
+    category: 'Facial',
+    price: '$45',
+    duration: 30
+  },
+  {
+    id: 'service:5-2024',
+    name: 'Facial - Hydrating',
+    category: 'Facial',
+    price: '$65',
+    duration: 45
+  },
+  {
+    id: 'service:6-2024',
+    name: 'Facial - Anti-Aging',
+    category: 'Facial',
+    price: '$85',
+    duration: 60
+  },
+  {
+    id: 'service:7-2024',
+    name: 'Threading - Eyebrows',
+    category: 'Threading',
+    price: '$15',
+    duration: 15
+  },
+  {
+    id: 'service:8-2024',
+    name: 'Threading - Upper Lip',
+    category: 'Threading',
+    price: '$10',
+    duration: 10
+  },
+  {
+    id: 'service:9-2024',
+    name: 'Waxing - Legs Full',
+    category: 'Waxing',
+    price: '$55',
+    duration: 45
+  },
+  {
+    id: 'service:10-2024',
+    name: 'Waxing - Brazilian',
+    category: 'Waxing',
+    price: '$65',
+    duration: 30
+  }
+];
+
+// Singleton class to manage services data
+class ServicesData {
   constructor() {
-    this.cachedServices = null;
-    this.lastFetchTime = 0;
-    this.cacheDuration = 5 * 60 * 1000; // 5 minutes cache
+    this.services = SERVICES_DATA;
   }
 
-  /**
-   * Get all available services
-   * @param {boolean} forceRefresh Force refresh the cache
-   * @returns {Promise<Array>} List of services
-   */
-  async getAllServices(forceRefresh = false) {
-    const now = Date.now();
+  async getAllServices() {
+    // In a real implementation, this would fetch from an API
+    console.log('📋 Getting all services');
+    return this.services;
+  }
+
+  async getServicesByCategory(category) {
+    console.log(`📋 Getting services for category: ${category}`);
+    return this.services.filter(service => 
+      service.category.toLowerCase() === category.toLowerCase()
+    );
+  }
+
+  async getServiceById(serviceId) {
+    console.log(`📋 Looking up service by ID: ${serviceId}`);
+    const service = this.services.find(s => s.id === serviceId);
     
-    // Check if cache is valid
-    if (!forceRefresh && this.cachedServices && (now - this.lastFetchTime < this.cacheDuration)) {
-      return this.cachedServices;
+    if (!service) {
+      console.log(`❌ Service not found with ID: ${serviceId}`);
+      throw new Error(`Service not found with ID: ${serviceId}`);
     }
     
-    try {
-      // Fetch services from the API
-      const response = await fetch('/api/services?activeOnly=true');
-      if (!response.ok) {
-        throw new Error(`API request failed with status ${response.status}`);
-      }
-      
-      const data = await response.json();
-      
-      // Flatten all categories into a single array and format service objects
-      let services = [];
-      Object.keys(data.categories).forEach(category => {
-        const categoryServices = data.categories[category].map(service => ({
-          id: service.id,
-          name: service.name,
-          duration: service.duration || 60, // Default to 60 mins if no duration
-          price: service.price,
-          followUp: service.followUp
-        }));
-        services = [...services, ...categoryServices];
-      });
-      
-      this.cachedServices = services;
-      this.lastFetchTime = now;
-      
-      return services;
-    } catch (error) {
-      console.error('Error fetching services from API:', error);
-      throw error;
-    }
+    console.log(`✅ Found service: ${service.name}`);
+    return service;
   }
-  
-  /**
-   * Get service duration by service ID or name
-   * @param {string} serviceIdOrName The service ID or name
-   * @returns {Promise<number>} Duration in minutes
-   */
-  async getServiceDuration(serviceIdOrName) {
-    try {
-      // Try to get the service details from the API
-      const response = await fetch('/api/services', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ 
-          serviceId: serviceIdOrName.startsWith('service:') ? serviceIdOrName : undefined,
-          serviceName: !serviceIdOrName.startsWith('service:') ? serviceIdOrName : undefined
-        }),
-      });
-      
-      if (response.ok) {
-        const service = await response.json();
-        if (service && typeof service.duration === 'number') {
-          return service.duration;
-        }
-      }
-      
-      // If API call fails or service not found, try to find in cached services
-      const services = await this.getAllServices();
-      const service = services.find(s => 
-        s.id === serviceIdOrName || 
-        s.name === serviceIdOrName || 
-        s.name.toLowerCase().includes(serviceIdOrName.toLowerCase())
-      );
-      
-      if (service && service.duration) {
-        return service.duration;
-      }
-      
-      // Return default duration if not found
-      return 60; // Default duration: 60 minutes
-    } catch (error) {
-      console.error('Error getting service duration:', error);
-      return 60; // Default duration: 60 minutes
-    }
+
+  async getServiceDuration(serviceId) {
+    const service = await this.getServiceById(serviceId);
+    return service.duration;
   }
-  
-  /**
-   * Find a service by name, ID, or partial match
-   * @param {string} query The search query
-   * @returns {Promise<Object|null>} The service object or null if not found
-   */
-  async findService(query) {
-    try {
-      // Try to get the service details from the API first
-      const response = await fetch('/api/services', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ 
-          serviceId: query.startsWith('service:') ? query : undefined,
-          serviceName: !query.startsWith('service:') ? query : undefined
-        }),
-      });
-      
-      if (response.ok) {
-        const service = await response.json();
-        if (service && service.id) {
-          return {
-            id: service.id,
-            name: service.name,
-            duration: service.duration || 60,
-            price: service.price,
-            followUp: service.followUp
-          };
-        }
-      }
-      
-      // Fallback to cached services
-      const services = await this.getAllServices();
-      return services.find(s => 
-        s.id === query || 
-        s.name === query || 
-        s.name.toLowerCase().includes(query.toLowerCase())
-      ) || null;
-    } catch (error) {
-      console.error('Error finding service:', error);
-      return null;
-    }
-  }
+
+  // Add more methods as needed
 }
 
-// Create a singleton instance
-let servicesDataInstance = null;
+// Export a singleton getter
+let instance = null;
 
-/**
- * Get the ServicesDataService instance
- * @returns {ServicesDataService}
- */
 export function getServicesData() {
-  if (!servicesDataInstance) {
-    servicesDataInstance = new ServicesDataService();
+  if (!instance) {
+    instance = new ServicesData();
   }
-  return servicesDataInstance;
+  return instance;
 } 

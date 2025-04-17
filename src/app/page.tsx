@@ -1,422 +1,249 @@
 'use client';
 
-import Image from 'next/image';
-import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
-import { ChatOpenAI } from '@langchain/openai';
-import { AgentExecutor, createToolCallingAgent } from 'langchain/agents';
-import { BaseCallbackHandler } from "@langchain/core/callbacks/base";
-import { LookupUserTool } from '@/tools/lookupUser';
-import { getAvailableSlotsTool as getAvailableSlots } from '@/tools/getAvailableSlots';
-import { BookAppointmentTool } from '@/tools/bookAppointment';
-import { ChatPromptTemplate,
-  MessagesPlaceholder,
-  SystemMessagePromptTemplate,
-  HumanMessagePromptTemplate } from '@langchain/core/prompts';
-import { HumanMessage, SystemMessage } from "@langchain/core/messages";
-import { getServicesTool as getServices } from '@/tools/getServices';
-import ReactMarkdown from 'react-markdown';
-import { systemPrompt } from '@/prompts/systemPrompt';
-import { BufferMemory } from "langchain/memory";
+import { useState, useRef, useEffect } from 'react';
+import { v4 as uuidv4 } from 'uuid';
+import { ChatInterface, Message } from '@/components/ChatInterface';
+import { Loading } from '@/components/Loading';
 
 export default function Home() {
-
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [errorMessage, setErrorMessage] = useState<string>('');
+  const [sessionId, setSessionId] = useState<string>('');
+  const [isResetting, setIsResetting] = useState<boolean>(false);
+  const [isClearingContext, setIsClearingContext] = useState<boolean>(false);
   
-
-  const memory = useMemo(() => new BufferMemory({
-    returnMessages: true,
-    memoryKey: "chat_history",
-    inputKey: "input",
-    outputKey: "output"
-  }), []);
-  
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  const [executor, setExecutor] = useState<AgentExecutor | null>(null);
-
-  // Define input and messages state
-  const [input, setInput] = useState('');
-  const [messages, setMessages] = useState<{ role: string; content: string; toolCalls?: string[] }[]>([
-    {
-      role: 'assistant',
-      content: 'Hello! How are you! Can I have your mobile number please? 😊'
-    }
-  ]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<{ message: string } | null>(null);
-  const [activeTool, setActiveTool] = useState<string | null>(null);
-  // Add user context state
-  const [userContext, setUserContext] = useState<{ resourceName?: string; name?: string; mobile?: string } | null>(null);
-  const [currentInput, setCurrentInput] = useState<string>('');
-
-  // Add a ref to persist userContext across re-renders
-  const userContextRef = useRef<{ resourceName?: string; name?: string; mobile?: string } | null>(null);
-  
-  const toolResults: any[] = [];
-
-  class CaptureToolResultHandler extends BaseCallbackHandler {
-    name = "CaptureToolResultHandler";
-   
-    
-    handleToolEnd(output: string, runId?: string, parentRunId?: string, tags?: string[]): Promise<void> | void {
-      try {
-        console.log(`🛠️ Tool output:`, output);
-        const parsedOutput = typeof output === 'string' ? JSON.parse(output) : output;
-        toolResults.push(parsedOutput);
-        
-        // Process user data from lookupUser tool results
-        try {
-          // Store the user info when lookupUser returns valid data
-          if (parsedOutput && parsedOutput.resourceName) {
-            console.log('👤 Found user data in tool result:', parsedOutput);
-            
-            // Save user data for future tool calls
-            const userInfo = {
-              resourceName: parsedOutput.resourceName,
-              name: parsedOutput.name,
-              mobile: parsedOutput.mobile,
-            };
-            
-            console.log('🔒 Stored user data for future tool calls:', userInfo);
-            
-            // Also update the React state
-            setUserContext(userInfo);
-            userContextRef.current = userInfo;
-            
-            // Log to debug any issues with resourceName
-            console.log('🔑 resourceName set to:', parsedOutput.resourceName);
-          }
-        } catch (e) {
-          // If parsing fails or data doesn't have resourceName, ignore
-          console.error('❌ Error processing tool output:', e);
-        }
-      } catch (e) {
-        // If not JSON or doesn't have resourceName, ignore
-        console.log(`⚠️ Could not parse tool output as JSON:`, e);
-        toolResults.push(output);
-      }
-    }
-  }
-  
-  // Create a persistent instance of the handler
-  const toolHandler = new CaptureToolResultHandler();
-  
-  // Add debugger function that logs all important state
-  const debugState = () => {
-    console.log('🔍 DEBUG STATE:');
-    console.log('📱 User Context State:', userContext);
-    console.log('💬 Messages:', messages.length);
-    console.log('🛠️ Executor Ready:', !!executor);
-  };
-
-  // Handle input change
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setInput(e.target.value);
-  };
-
-  // Initialize executor properly
+  // Retrieve stored session ID on component mount
   useEffect(() => {
-    const initializeExecutor = async () => {
+    // Check if the server has restarted by comparing timestamps
+    const checkServerRestart = async () => {
       try {
-        // Create the tools properly - the problem is here
-        const lookupUser = new LookupUserTool();
-        console.log("🔧 Initialized LookupUserTool with name:", lookupUser.name);
-        
-        const bookAppointment = new BookAppointmentTool();
-        const tools = [
-          lookupUser,
-          getServices,
-          getAvailableSlots,
-          bookAppointment,          
-        ];
-
-        // Log all tool names to debug
-        console.log("🧰 Tool names:", tools.map(tool => tool.name));
-
-        // 2. Setup LLM
-        const llm = new ChatOpenAI({
-          temperature: 0,
-          modelName: 'gpt-4o',
-          apiKey: process.env.NEXT_PUBLIC_OPENAI_API_KEY,
-        });
-
-        // Add debug logging for API key
-        console.log("API Key available:", !!process.env.NEXT_PUBLIC_OPENAI_API_KEY);
-
-        const prompt = ChatPromptTemplate.fromMessages([
-          ["system", systemPrompt],
-          new MessagesPlaceholder("chat_history"),        // 🧠 Enables memory
-          ["human", "{input}"],
-          ["system", "{agent_scratchpad}"]   // 🛠️ Enables tool output trace
-        ]);
-
-        const agent = await createToolCallingAgent({
-          llm,
-          tools,
-          prompt,
-        });
-
-        // Define executor instance without memory to test
-        const executorInstance = new AgentExecutor({
-          agent,
-          tools,          
-          returnIntermediateSteps: true,
-          memory  // Comment out memory to test if it's causing the input values issue
+        // Fetch the current page to get the server timestamp header
+        const response = await fetch('/', { 
+          method: 'HEAD',
+          cache: 'no-store' // Prevent caching to ensure we get fresh headers
         });
         
-        setExecutor(executorInstance);
-      } catch (err) {
-        console.error('Error initializing executor:', err);
+        // Get the server start timestamp from response headers
+        const serverStartTime = response.headers.get('X-Server-Start-Time');
+        const storedStartTime = localStorage.getItem('serverStartTime');
+        
+        // If server has restarted (timestamp changed or no stored timestamp)
+        if (!storedStartTime || serverStartTime !== storedStartTime) {
+          console.log('🔄 Server restart detected, clearing localStorage');
+          
+          // Clear all chat related data
+          Object.keys(localStorage).forEach(key => {
+            if (key.startsWith('chat') || key === 'sessionId') {
+              localStorage.removeItem(key);
+            }
+          });
+          
+          // Store the new timestamp
+          localStorage.setItem('serverStartTime', serverStartTime || '');
+          
+          // Reset state
+          setSessionId('');
+          setMessages([]);
+          return;
+        }
+      } catch (error) {
+        console.error('Error checking server restart:', error);
       }
     };
-    initializeExecutor();
-  }, []);
-
-  // Auto scroll to bottom when new messages arrive
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
-
-  // Log when messages change
-  useEffect(() => {
-    console.log('Messages updated:', messages);
-  }, [messages]);
-
-  // Update handleFormSubmit with better tool handling
-  const handleMessageSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!input.trim()) return;
-    if (!executor) {
-      console.error("Executor not initialized");
-      return;
+    
+    // Check for server restart first
+    checkServerRestart();
+    
+    // Then load stored session data if it exists
+    const storedSessionId = localStorage.getItem('chatSessionId');
+    if (storedSessionId) {
+      setSessionId(storedSessionId);
+      console.log('📝 Retrieved stored session ID:', storedSessionId);
+      
+      // Load stored messages if they exist
+      const storedMessages = localStorage.getItem(`chatMessages-${storedSessionId}`);
+      if (storedMessages) {
+        try {
+          const parsedMessages = JSON.parse(storedMessages);
+          setMessages(parsedMessages);
+          console.log('📝 Loaded stored chat history:', parsedMessages.length, 'messages');
+        } catch (e) {
+          console.error('Failed to parse stored messages:', e);
+        }
+      }
     }
+  }, []);
+  
+  // Save messages to localStorage whenever they change
+  useEffect(() => {
+    if (sessionId && messages.length > 0) {
+      localStorage.setItem(`chatMessages-${sessionId}`, JSON.stringify(messages));
+    }
+  }, [messages, sessionId]);
+  
+  const handleSendMessage = async (content: string) => {
+    if (!content.trim()) return;
 
     setIsLoading(true);
-    setError(null);
+    setErrorMessage('');
     
-    // Create user message
-    const userMessage = {
-      role: 'user',
-      content: input,
+    // Add user message to chat
+    const userMessage: Message = { 
+      role: 'user', 
+      content, 
+      id: uuidv4() 
     };
-
-    // Add user message to the messages array
-    setMessages(prevMessages => [...prevMessages, userMessage]);
-    
-    // Save the current input before clearing it
-    const currentInput = input;
-    setInput('');
+    setMessages(prev => [...prev, userMessage]);
     
     try {
-      console.log("🔍 Submitting message:", currentInput);
+      // Call the backend API with the session ID if available
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(sessionId ? { 'x-session-id': sessionId } : {})
+        },
+        body: JSON.stringify({
+          message: content
+        })
+      });
       
-      // Get the current user context
-      const currentUserContext = userContextRef.current;
-      console.log("👤 Current user context:", currentUserContext);
-      
-      if (!executor) {
-        throw new Error("Executor not initialized");
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status}`);
       }
       
-      // Explicitly log the current resourceName for debugging
-      let inputToUse = currentInput;
-      if (currentUserContext && currentUserContext.resourceName) {
-        console.log("📌 Using resourceName:", currentUserContext.resourceName);
-        // Ensure it's in the message to help the agent use the right value
-        inputToUse = `${currentInput} (User context: ResourceName=${currentUserContext.resourceName}, Name=${currentUserContext.name})`;
-        console.log("📝 Enhanced input:", inputToUse);
-      }
-
-      // Execute with the input (regular or enhanced with context)
-      const response = await executor.invoke(
-        { input: inputToUse },
-        { callbacks: [toolHandler] }
-      );
+      const data = await response.json();
       
-      // Log all the important state after execution
-      console.log("✅ Execution result:", response);
-      // console.log("💬 Memory content:", memory);
-      console.log("🔍 Final userContextRef:", userContextRef.current);
-      
-      // Extract a string response, handling different result formats
-      let responseContent = "";
-      if (typeof response === 'string') {
-        responseContent = response;
-      } else if (response.output) {
-        responseContent = String(response.output);
-      } else if (response.response) {
-        responseContent = String(response.response);
-      } else {
-        // For complex objects, stringify the first available property
-        const firstKey = Object.keys(response)[0];
-        responseContent = firstKey ? String(response[firstKey]) : JSON.stringify(response);
+      // Save the session ID if we got one back
+      if (data.sessionId && !sessionId) {
+        setSessionId(data.sessionId);
+        localStorage.setItem('chatSessionId', data.sessionId);
+        console.log('📝 New session ID received and stored:', data.sessionId);
       }
       
-      // Add bot message to the messages array
-      const botMessage = { 
+      // Add assistant response
+      setMessages(prev => [...prev, { 
         role: 'assistant', 
-        content: responseContent
-      };
-      
-      setMessages(prevMessages => [...prevMessages, botMessage]);
+        content: data.response,
+        id: uuidv4()
+      }]);
     } catch (error) {
-      console.error("❌ Error during execution:", error);
-      const errorMessage = { 
+      console.error('❌ Error in chat execution:', error);
+      setErrorMessage('Something went wrong. Please try again.');
+      
+      // Add error message to chat
+      setMessages(prev => [...prev, { 
         role: 'assistant', 
-        content: `I'm sorry, I encountered an error: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again.` 
-      };
-      setMessages(prevMessages => [...prevMessages, errorMessage]);
-      setError({ message: error instanceof Error ? error.message : 'An unknown error occurred' });
+        content: 'Sorry, I encountered an error processing your request. Please try again.',
+        id: uuidv4()
+      }]);
     } finally {
       setIsLoading(false);
     }
   };
+  
+  const handleResetChat = () => {
+    if (window.confirm('Are you sure you want to reset the chat? This will clear all messages and start a new session.')) {
+      setIsResetting(true);
+      
+      // Clear local storage
+      if (sessionId) {
+        localStorage.removeItem(`chatMessages-${sessionId}`);
+        localStorage.removeItem('chatSessionId');
+      }
+      
+      // Reset state
+      setMessages([]);
+      setSessionId('');
+      setErrorMessage('');
+      
+      // Show reset message briefly
+      setTimeout(() => {
+        setIsResetting(false);
+      }, 1000);
+    }
+  };
 
-  // Add a custom renderer for paragraphs to add more spacing
-  const renderParagraphs = ({node, ...props}: React.HTMLAttributes<HTMLParagraphElement> & { node?: any }) => {
-    // Check if this paragraph contains a category header (like "Lashes" or "Facial")
-    const content = String(props.children || '');
-    // Check for standalone category headers that might be bolded in markdown
-    const isCategoryHeader = /^(\*\*)?(?:Lashes|Facial|Threading|Waxing|Skin)(\*\*)?$/.test(content.trim());
-    return <p className={isCategoryHeader ? "font-bold text-lg mt-4 mb-2" : "my-3"} {...props} />;
+  const handleClearContext = async () => {
+    if (!sessionId) {
+      alert('No active session to clear.');
+      return;
+    }
+    
+    if (window.confirm(`Are you sure you want to clear the server-side context for session ${sessionId}? This will remove any stored user information.`)) {
+      setIsClearingContext(true);
+      
+      try {
+        // Call the admin API to clear the context for this session
+        const response = await fetch(`/api/admin/context?sessionId=${sessionId}`, {
+          method: 'DELETE'
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok && data.success) {
+          console.log('✅ Successfully cleared server context:', data);
+          alert('Server context cleared successfully.');
+        } else {
+          console.error('❌ Failed to clear context:', data);
+          alert(`Failed to clear context: ${data.error || 'Unknown error'}`);
+        }
+      } catch (error) {
+        console.error('❌ Error clearing context:', error);
+        alert(`Error clearing context: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      } finally {
+        setIsClearingContext(false);
+      }
+    }
   };
 
   return (
-    <div className="flex flex-col h-screen bg-gray-100">
-      {/* Chat container */}
-      <div className="flex-1 p-4 container mx-auto max-w-4xl">
-        <div className="bg-white rounded-lg shadow-lg h-full flex flex-col">
-          {/* Chat header */}
-          <div className="p-4 border-b">
-            <h2 className="text-lg font-semibold">Rare Beauty Chat</h2>
-          </div>
-
-          {/* Chat messages */}
-          <div className="flex-1 p-4 overflow-y-auto space-y-4">
-            {messages.map((message, index) => (
-              <div
-                key={index}
-                className={`flex items-start gap-2.5 ${
-                  message.role === 'user' ? 'flex-row-reverse' : ''
-                }`}
+    <main className="flex min-h-screen flex-col items-center justify-between p-4">
+      <div className="z-10 w-full max-w-4xl bg-white rounded-lg shadow-xl overflow-hidden h-[calc(100vh-2rem)]">
+        <div className="p-4 bg-pink-100 border-b border-pink-200 flex justify-between items-center">
+          <h1 className="text-xl font-bold text-pink-900">Rare Beauty Chat</h1>
+          <div className="flex space-x-2">
+            {sessionId && (
+              <button 
+                onClick={handleClearContext}
+                disabled={isClearingContext || isResetting}
+                className="px-3 py-1 text-sm bg-purple-500 hover:bg-purple-600 text-white rounded-md transition-colors"
               >
-                <div className={`relative w-8 h-8 overflow-hidden ${
-                  message.role === 'user' ? 'bg-blue-100' : 'bg-white'
-                } rounded-full flex items-center justify-center`}>
-                  {message.role === 'user' ? (
-                    <span className="text-blue-600 text-sm font-semibold">U</span>
-                  ) : (
-                    <Image
-                      src="/rb-logo.png"
-                      alt="Rare Beauty logo"
-                      width={32}
-                      height={32}
-                      className="object-contain"
-                    />
-                  )}
-                </div>
-                <div className={`flex flex-col w-full max-w-[320px] leading-1.5 ${
-                  message.role === 'user' ? 'items-end' : ''
-                }`}>
-                  <div className={`p-4 ${
-                    message.role === 'user'
-                      ? 'bg-blue-500 text-white rounded-s-xl rounded-ee-xl'
-                      : 'bg-gray-100 text-gray-900 rounded-e-xl rounded-es-xl'
-                  }`}>
-                    {message.role === 'user' ? (
-                      <p className="text-sm font-normal">{message.content}</p>
-                    ) : (
-                      <div className="text-sm font-normal markdown-content">
-                        <ReactMarkdown
-                          components={{
-                            p: renderParagraphs,
-                            h1: ({node, ...props}) => <h1 className="text-xl font-bold mt-4 mb-2" {...props} />,
-                            h2: ({node, ...props}) => <h2 className="text-lg font-bold mt-4 mb-2" {...props} />,
-                            h3: ({node, ...props}) => <h3 className="text-md font-bold mt-3 mb-1" {...props} />,
-                            ul: ({node, ...props}) => <ul className="list-none pl-0 my-3" {...props} />,
-                            ol: ({node, ...props}) => <ol className="list-decimal pl-5 my-3" {...props} />,
-                            li: ({node, ...props}) => <li className="my-2" {...props} />,
-                            pre: ({node, ...props}) => <pre className="bg-gray-100 p-2 rounded my-3 overflow-x-auto" {...props} />,
-                            strong: ({node, children, ...props}) => {
-                              const content = String(children || '');
-                              const isCategoryHeader = /^(?:Lashes|Facial|Threading|Waxing|Skin)$/.test(content.trim());
-                              return isCategoryHeader ? 
-                                <strong className="block text-lg mt-4 mb-2" {...props}>{children}</strong> : 
-                                <strong {...props}>{children}</strong>;
-                            }
-                          }}
-                        >
-                          {message.content}
-                        </ReactMarkdown>
-                      </div>
-                    )}
-                  </div>
-                  <span className="text-xs text-gray-500 mt-1">
-                    {message.role === 'user' ? 'You' : 'Bot'} • Just now
-                    {message.toolCalls && message.toolCalls.length > 0 && (
-                      <span className="ml-2 text-xs text-blue-500">
-                        {message.toolCalls.length} tool{message.toolCalls.length > 1 ? 's' : ''} used
-                      </span>
-                    )}
-                  </span>
-                  {message.toolCalls && message.toolCalls.length > 0 && (
-                    <div className="mt-1 text-xs text-gray-500 bg-gray-50 p-2 rounded-md">
-                      <details>
-                        <summary className="cursor-pointer text-blue-500">Tool calls</summary>
-                        <ul className="mt-1 list-disc pl-4">
-                          {message.toolCalls.map((call, idx) => (
-                            <li key={idx} className="text-xs break-all">{call}</li>
-                          ))}
-                        </ul>
-                      </details>
-                    </div>
-                  )}
-                </div>
-              </div>
-            ))}
-            <div ref={messagesEndRef} />
-            
-            {/* Error message */}
-            {error && (
-              <div className="p-4 bg-red-50 text-red-500 rounded-lg">
-                Error: {error.message}
-              </div>
-            )}
-
-            {/* Loading indicator */}
-            {isLoading && (
-              <div className="flex items-center gap-2 text-gray-500">
-                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
-                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
-                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
-              </div>
-            )}
-          </div>
-
-          {/* Chat input */}
-          <div className="p-4 border-t">
-            <form onSubmit={handleMessageSubmit} className="flex items-center gap-2">
-              <input
-                type="text"
-                value={input}
-                onChange={handleInputChange}
-                className="flex-1 px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="Type your message..."
-              />
-              <button
-                type="submit"
-                disabled={isLoading}
-                className={`px-4 py-2 bg-blue-500 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                  isLoading 
-                    ? 'opacity-50 cursor-not-allowed'
-                    : 'hover:bg-blue-600'
-                }`}
-              >
-                {isLoading ? 'Sending...' : 'Send'}
+                {isClearingContext ? <Loading text="Clearing" size="sm" /> : 'Clear Context'}
               </button>
-            </form>
+            )}
+            <button 
+              onClick={handleResetChat}
+              disabled={isResetting}
+              className="px-3 py-1 text-sm bg-pink-500 hover:bg-pink-600 text-white rounded-md transition-colors"
+            >
+              {isResetting ? <Loading text="Resetting" size="sm" /> : 'New Chat'}
+            </button>
           </div>
         </div>
+        
+        {isResetting ? (
+          <div className="h-[calc(100%-4rem)] flex items-center justify-center">
+            <Loading text="Starting new chat..." size="lg" />
+          </div>
+        ) : (
+          <div className="h-[calc(100%-4rem)]">
+            <ChatInterface
+              messages={messages}
+              onSendMessage={handleSendMessage}
+              isLoading={isLoading}
+              placeholder="Ask about services or book an appointment..."
+            />
+          </div>
+        )}
+        
+        {errorMessage && (
+          <div className="p-2 bg-red-100 text-red-700 text-sm">
+            {errorMessage}
+          </div>
+        )}
       </div>
-    </div>
+    </main>
   );
 }

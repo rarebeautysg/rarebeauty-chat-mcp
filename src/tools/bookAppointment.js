@@ -22,7 +22,9 @@ export class BookAppointmentTool extends StructuredTool {
   async _call(inputs) {
     const { serviceIds, date, time, name, mobile, resourceName } = inputs;
 
+    // Check required fields
     if (!name || !mobile || !resourceName) {
+      console.log('❌ Missing required booking fields:', { name, mobile, resourceName });
       return JSON.stringify({
         success: false,
         error: "Missing value for input variable resourceName, name, mobile",
@@ -30,8 +32,11 @@ export class BookAppointmentTool extends StructuredTool {
       });
     }
 
+    console.log('📅 Booking appointment with inputs:', { serviceIds, date, time, name, mobile, resourceName });
+    
     const serviceIdArray = Array.isArray(serviceIds) ? serviceIds : [serviceIds];
 
+    // Process date
     let requestedDate;
     if (date.toLowerCase() === 'today') {
       requestedDate = new Date();
@@ -50,6 +55,7 @@ export class BookAppointmentTool extends StructuredTool {
     } else {
       requestedDate = new Date(date);
       if (isNaN(requestedDate.getTime())) {
+        console.log(`❌ Invalid date format: ${date}`);
         return JSON.stringify({
           success: false,
           error: `Invalid date format: ${date}`
@@ -58,6 +64,7 @@ export class BookAppointmentTool extends StructuredTool {
     }
 
     const formattedDate = requestedDate.toISOString().split('T')[0];
+    console.log(`📅 Formatted date: ${formattedDate}`);
 
     const processedServiceIds = [];
     let totalDuration = 0;
@@ -67,6 +74,9 @@ export class BookAppointmentTool extends StructuredTool {
     const servicesData = getServicesData();
     const allServices = await servicesData.getAllServices();
 
+    // Find the primary service to book (using first service in array)
+    let primaryService = serviceIdArray[0]; 
+    
     for (const serviceId of serviceIdArray) {
       let matchedServiceId = serviceId;
       let serviceName = serviceId;
@@ -107,57 +117,88 @@ export class BookAppointmentTool extends StructuredTool {
       }
     }
 
-    const parsedTime = time.toLowerCase().replace(/\s/g, '');
-    let hours = 0, minutes = 0;
-
-    if (parsedTime.includes(':')) {
-      const timeParts = parsedTime.split(':');
-      hours = parseInt(timeParts[0], 10);
-      minutes = parseInt(timeParts[1].replace(/[^0-9]/g, ''), 10);
-      if (parsedTime.includes('pm') && hours < 12) hours += 12;
-    } else {
-      hours = parseInt(parsedTime.replace(/[^0-9]/g, ''), 10);
-      if (parsedTime.includes('pm') && hours < 12) hours += 12;
-    }
-
-    const bookingDateTime = new Date(requestedDate);
-    bookingDateTime.setHours(hours, minutes, 0, 0);
-
-    const formattedStart = `${bookingDateTime.getFullYear()}${(bookingDateTime.getMonth()+1).toString().padStart(2, '0')}${bookingDateTime.getDate().toString().padStart(2, '0')}T${bookingDateTime.getHours().toString().padStart(2, '0')}${bookingDateTime.getMinutes().toString().padStart(2, '0')}`;
-
-    const bookingRequest = {
-      name,
-      mobile,
-      resourceName,
-      start: formattedStart,
-      serviceIds: processedServiceIds,
-      duration: totalDuration,
-      totalAmount: totalPrice,
-      additional: 0,
-      discount: 0,
-      toBeInformed: true,
-      deposit: 0,
-      force: false
-    };
-
-    const response = await fetch('/api/booking', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(bookingRequest)
-    });
-    
-    const result = await response.json();
-
-    if (result.success) {
+    // Make the API call to create the booking
+    try {
+      // Get the base URL
+      let baseUrl = '';
+      if (typeof window !== 'undefined') {
+        baseUrl = window.location.origin;
+      } else {
+        baseUrl = process.env.VERCEL_URL 
+          ? `https://${process.env.VERCEL_URL}`
+          : 'http://localhost:3000';
+      }
+      
+      // Create the request that matches our new API format
+      const bookingRequest = {
+        services: serviceNames, // Use the services array field
+        date: formattedDate,
+        time: time, // Use original time format, API will handle parsing
+        resourceName, // Pass through the resourceName
+        serviceIds: processedServiceIds, // Pass all service IDs for reference
+        name, // Include customer name
+        mobile, // Include mobile number
+        duration: totalDuration, // Pass duration in minutes
+        totalAmount: totalPrice, // Pass total price
+        additional: 0,
+        discount: 0,
+        toBeInformed: true,
+        deposit: 0,
+        force: false,
+        notes: `Booked via chat assistant for ${name}`
+      };
+      
+      const apiUrl = `${baseUrl}/api/booking`;
+      console.log(`🔄 Making booking API call to ${apiUrl}`);
+      console.log('📝 New booking request format:', bookingRequest);
+      
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': process.env.SOHO_AUTH_TOKEN || ''
+        },
+        body: JSON.stringify(bookingRequest)
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`❌ Booking API error: ${response.status} - ${errorText}`);
+        
+        return JSON.stringify({
+          success: false,
+          error: `API error: ${response.status}`,
+          details: errorText
+        });
+      }
+      
+      const result = await response.json();
+      console.log(`✅ Booking successful:`, result);
+      
+      // Format response based on API result
+      let serviceMessage = result.service;
+      if (result.additionalServices && result.additionalServices.length > 0) {
+        serviceMessage += ` and ${result.additionalServices.join(', ')}`;
+      }
+      
       return JSON.stringify({
         success: true,
-        message: `✅ Appointment successfully booked for ${serviceNames.join(', ')} ($${totalPrice.toFixed(2)}) on ${formattedDate} at ${time} for ${name}. It will last about ${totalDuration} minutes.`,
-        bookingId: result.id || 'unknown'
+        message: `✅ Appointment successfully booked for ${serviceMessage} on ${result.date} at ${result.time} for ${name}.`,
+        appointmentId: result.appointmentId,
+        service: result.service,
+        additionalServices: result.additionalServices || [],
+        date: result.date,
+        time: result.time,
+        customer: result.customer,
+        status: result.status
       });
-    } else {
+    } catch (error) {
+      console.error('❌ Error in booking API call:', error);
+      
       return JSON.stringify({
         success: false,
-        error: result.error || "Unknown error during booking"
+        error: 'Failed to complete booking',
+        message: error.message
       });
     }
   }
