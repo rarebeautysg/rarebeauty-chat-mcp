@@ -5,6 +5,40 @@ import { v4 as uuidv4 } from 'uuid';
 import { ChatInterface, Message } from '@/components/ChatInterface';
 import { Loading } from '@/components/Loading';
 
+// Function to extract service name from current input or recent chat history
+function extractServiceFromHistory(currentInput: string, messages: Message[]) {
+  // List of service names to check for
+  const serviceNames = [
+    'facial', 'massage', 'lashes', 'dense lashes', 'brows', 
+    'waxing', 'beauty', 'nails', 'haircut', 'blowout', 'hair color'
+  ];
+  
+  // First, check the current input
+  const normalizedInput = currentInput.toLowerCase();
+  for (const service of serviceNames) {
+    if (normalizedInput.includes(service)) {
+      console.log(`📋 Found service in current input: ${service}`);
+      return service;
+    }
+  }
+  
+  // If not found in current input, check the last 5 messages
+  const recentMessages = messages.slice(-5);
+  for (const message of recentMessages) {
+    const normalizedContent = message.content.toLowerCase();
+    for (const service of serviceNames) {
+      if (normalizedContent.includes(service)) {
+        console.log(`📋 Found service in chat history: ${service}`);
+        return service;
+      }
+    }
+  }
+  
+  // No service found
+  console.log('📋 No service found in input or history');
+  return null;
+}
+
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -177,8 +211,21 @@ export default function Home() {
       try {
         // Call the admin API to clear the context for this session
         const response = await fetch(`/api/admin/context?sessionId=${sessionId}`, {
-          method: 'DELETE'
+          method: 'DELETE',
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+          }
         });
+        
+        // Check if response is JSON
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+          console.error('❌ Non-JSON response when clearing context:', contentType);
+          const text = await response.text();
+          console.error('❌ Response text:', text.substring(0, 200));
+          throw new Error('Received non-JSON response from server');
+        }
         
         const data = await response.json();
         

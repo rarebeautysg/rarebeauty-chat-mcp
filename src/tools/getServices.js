@@ -1,5 +1,5 @@
 import { Tool } from "@langchain/core/tools";
-import { getServicesData } from "../services/servicesData";
+import { getAllFormattedServices } from "../app/api/services/route";
 
 class GetServicesTool extends Tool {
   constructor() {
@@ -12,8 +12,8 @@ class GetServicesTool extends Tool {
     console.log('📋 GetServices tool called');
     
     try {
-      const servicesData = getServicesData();
-      const allServices = await servicesData.getAllServices();
+      // Get services from our consolidated API
+      const allServices = await getAllFormattedServices();
       
       // Group services by category
       const servicesByCategory = allServices.reduce((acc, service) => {
@@ -57,19 +57,14 @@ export const getServicesTool = new GetServicesTool();
 // Export the function to get active services for other modules that need it
 export const getActiveServices = async () => {
   try {
-    const response = await fetch('/api/services?activeOnly=true');
-    if (!response.ok) {
-      throw new Error(`API request failed with status ${response.status}`);
-    }
-    const data = await response.json();
-    
-    // Flatten all categories into a single array
-    let allServices = [];
-    Object.keys(data.categories).forEach(category => {
-      allServices = [...allServices, ...data.categories[category]];
-    });
-    
-    return allServices;
+    const allServices = await getAllFormattedServices();
+    return allServices.map(service => ({
+      id: service.id,
+      name: service.name,
+      price: service.price,
+      duration: service.duration,
+      category: service.category
+    }));
   } catch (error) {
     console.error('Error fetching active services:', error);
     return [];

@@ -1,6 +1,6 @@
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
-import { getServicesData } from "../services/servicesData";
+import { getAllFormattedServices, getServiceDuration } from "../app/api/services/route";
 
 const BookAppointmentSchema = z.object({
   serviceIds: z.array(z.string()),
@@ -71,50 +71,58 @@ export class BookAppointmentTool extends StructuredTool {
     let totalPrice = 0;
     const serviceNames = [];
 
-    const servicesData = getServicesData();
-    const allServices = await servicesData.getAllServices();
+    try {
+      // Get all services using the consolidated API
+      const allServices = await getAllFormattedServices();
 
-    // Find the primary service to book (using first service in array)
-    let primaryService = serviceIdArray[0]; 
-    
-    for (const serviceId of serviceIdArray) {
-      let matchedServiceId = serviceId;
-      let serviceName = serviceId;
+      // Find the primary service to book (using first service in array)
+      let primaryService = serviceIdArray[0]; 
+      
+      for (const serviceId of serviceIdArray) {
+        let matchedServiceId = serviceId;
+        let serviceName = serviceId;
 
-      if (!serviceId.startsWith('service:')) {
-        const matchedService = allServices.find(s =>
-          s.name.toLowerCase() === serviceId.toLowerCase() ||
-          s.name.toLowerCase().includes(serviceId.toLowerCase())
-        );
+        if (!serviceId.startsWith('service:')) {
+          const matchedService = allServices.find(s =>
+            s.name.toLowerCase() === serviceId.toLowerCase() ||
+            s.name.toLowerCase().includes(serviceId.toLowerCase())
+          );
 
-        if (matchedService) {
-          matchedServiceId = matchedService.id;
-          serviceName = matchedService.name;
+          if (matchedService) {
+            matchedServiceId = matchedService.id;
+            serviceName = matchedService.name;
+          }
+        } else {
+          const matchedService = allServices.find(s => s.id === serviceId);
+          if (matchedService) {
+            serviceName = matchedService.name;
+          }
         }
-      } else {
-        const matchedService = allServices.find(s => s.id === serviceId);
-        if (matchedService) {
-          serviceName = matchedService.name;
+
+        processedServiceIds.push(matchedServiceId);
+        serviceNames.push(serviceName);
+
+        try {
+          // Get duration using the consolidated API
+          const duration = await getServiceDuration(matchedServiceId);
+          totalDuration += duration;
+
+          const matchedService = allServices.find(s => s.id === matchedServiceId);
+          if (matchedService && matchedService.price) {
+            totalPrice += matchedService.price;
+          }
+        } catch (e) {
+          console.error(`❌ Error getting service duration for ${matchedServiceId}:`, e);
+          totalDuration += 60; // Default to 60 minutes if there's an error
         }
       }
-
-      processedServiceIds.push(matchedServiceId);
-      serviceNames.push(serviceName);
-
-      try {
-        const duration = await servicesData.getServiceDuration(matchedServiceId);
-        totalDuration += duration;
-
-        const matchedService = allServices.find(s => s.id === matchedServiceId);
-        if (matchedService && matchedService.price) {
-          const price = typeof matchedService.price === 'string'
-            ? parseFloat(matchedService.price.replace(/[^0-9.]/g, ''))
-            : parseFloat(matchedService.price);
-          totalPrice += price;
-        }
-      } catch (e) {
-        totalDuration += 60;
-      }
+    } catch (error) {
+      console.error('❌ Error processing services:', error);
+      return JSON.stringify({
+        success: false,
+        error: 'Failed to process services',
+        message: error.message
+      });
     }
 
     // Make the API call to create the booking

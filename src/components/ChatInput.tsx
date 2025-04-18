@@ -1,4 +1,4 @@
-import React, { useState, KeyboardEvent, FormEvent } from 'react';
+import React, { useState, KeyboardEvent, FormEvent, useRef, useEffect } from 'react';
 
 interface ChatInputProps {
   onSubmit: (message: string) => void;
@@ -12,12 +12,34 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   placeholder = 'Type your message...'
 }) => {
   const [inputValue, setInputValue] = useState('');
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Focus the textarea when the component mounts
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.focus();
+    }
+  }, []);
+
+  // Re-focus the textarea after sending a message
+  useEffect(() => {
+    if (!isLoading && textareaRef.current) {
+      textareaRef.current.focus();
+    }
+  }, [isLoading]);
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     if (inputValue.trim() && !isLoading) {
       onSubmit(inputValue);
       setInputValue('');
+      
+      // Ensure focus returns to the textarea after a short delay
+      setTimeout(() => {
+        if (textareaRef.current) {
+          textareaRef.current.focus();
+        }
+      }, 10);
     }
   };
 
@@ -32,6 +54,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     <div className="w-full">
       <form onSubmit={handleSubmit} className="relative">
         <textarea
+          ref={textareaRef}
           className="w-full p-4 pr-16 bg-white border border-gray-200 rounded-xl shadow-sm focus:ring-2 focus:ring-pink-200 focus:outline-none resize-none"
           rows={2}
           placeholder={placeholder}
