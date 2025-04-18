@@ -1,6 +1,6 @@
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
-import { getAllFormattedServices, getServiceDuration } from "../app/api/services/route";
+import { getAllFormattedServices, getServiceDuration } from "../services/servicesData";
 
 const BookAppointmentSchema = z.object({
   serviceIds: z.array(z.string()),

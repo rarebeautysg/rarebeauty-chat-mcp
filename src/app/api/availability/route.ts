@@ -40,12 +40,12 @@ async function getCalendarService() {
   }
 }
 
-export async function POST(request: Request) {
+export async function POST(request: Request): Promise<Response> {
   console.log('📅 Availability API route called');
   
   try {
     // Set a timeout for the request
-    const timeoutPromise = new Promise((_, reject) => 
+    const timeoutPromise = new Promise<Response>((_, reject) => 
       setTimeout(() => reject(new Error('Request timeout')), 30000)
     );
     
@@ -63,7 +63,7 @@ export async function POST(request: Request) {
   }
 }
 
-async function handleAvailabilityRequest(request: Request) {
+async function handleAvailabilityRequest(request: Request): Promise<Response> {
   try {
     // Parse the request body
     const data: AvailabilityRequest = await request.json();

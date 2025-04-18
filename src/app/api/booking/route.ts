@@ -25,31 +25,34 @@ interface BookingRequest {
 }
 
 // Main POST handler with timeout
-export async function POST(request: Request) {
+export async function POST(request: Request): Promise<Response> {
   console.log('🗓️ Booking API route called');
   
+  // Set a timeout for the request (30 seconds)
+  const timeoutPromise = new Promise<Response>((_, reject) => {
+    setTimeout(() => reject(new Error('Request timeout')), 30000);
+  });
+  
   try {
-    // Set a timeout for the request
-    const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('Request timeout')), 30000)
-    );
-    
-    // Handle the actual request logic
-    const requestPromise = handleBookingRequest(request);
-    
-    // Race between the request and the timeout
-    return await Promise.race([requestPromise, timeoutPromise]);
+    // Race the request handling against the timeout
+    return await Promise.race([
+      handleBookingRequest(request),
+      timeoutPromise
+    ]) as Response;
   } catch (error) {
-    console.error('❌ Booking API error:', error);
+    console.error('❌ Booking request failed:', error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Unknown error' },
+      { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Unknown error' 
+      }, 
       { status: 500 }
     );
   }
 }
 
 // Main booking request handler
-async function handleBookingRequest(request: Request) {
+async function handleBookingRequest(request: Request): Promise<Response> {
   try {
     // Get the authorization token
     const authToken = request.headers.get('Authorization') || '';

@@ -1,7 +1,7 @@
 import { Tool } from "@langchain/core/tools";
-import { getAllFormattedServices } from "../app/api/services/route";
+import { getAllFormattedServices } from "../services/servicesData";
 
-class GetServicesTool extends Tool {
+export class GetServicesTool extends Tool {
   constructor() {
     super();
     this.name = "getServices";

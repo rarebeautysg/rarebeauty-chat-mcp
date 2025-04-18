@@ -1,10 +1,7 @@
 import { NextResponse } from 'next/server';
 import { ChatOpenAI } from '@langchain/openai';
 import { AgentExecutor, createToolCallingAgent } from 'langchain/agents';
-import { LookupUserTool } from '@/tools/lookupUser';
-import { getAvailableSlotsTool } from '@/tools/getAvailableSlots';
-import { BookAppointmentTool } from '@/tools/bookAppointment';
-import { getServicesTool } from '@/tools/getServices';
+import { lookupUserTool, getAvailableSlotsTool, getServicesTool, bookAppointmentTool } from '@/tools';
 import { ChatPromptTemplate, MessagesPlaceholder } from '@langchain/core/prompts';
 import { systemPrompt } from '@/prompts/systemPrompt';
 import { ToolResult } from '@/types/tools';
@@ -69,16 +66,15 @@ async function getOrCreateExecutor(sessionId: string): Promise<AgentExecutor> {
   
   console.log(`🔧 Creating new executor for session ${sessionId}`);
   
-  // Create tools
-  const lookupUser = new LookupUserTool();
-  const bookAppointment = new BookAppointmentTool();
-  
+  // Set up tools - use imported instances
   const tools = [
-    lookupUser,
+    lookupUserTool,
     getServicesTool,
     getAvailableSlotsTool,
-    bookAppointment,
+    bookAppointmentTool,
   ];
+  
+  console.log(`📋 Initialized tools:`, tools.map(t => t.name));
   
   // Setup LLM
   const apiKey = process.env.OPENAI_API_KEY;
@@ -100,18 +96,26 @@ async function getOrCreateExecutor(sessionId: string): Promise<AgentExecutor> {
     ["system", "{agent_scratchpad}"]
   ]);
   
-  // Create agent
-  const agent = await createToolCallingAgent({
-    llm,
-    tools,
-    prompt,
-  });
+  // Create agent with error handling
+  let agent;
+  try {
+    agent = await createToolCallingAgent({
+      llm,
+      tools,
+      prompt,
+    });
+    console.log(`✅ Agent created successfully for session ${sessionId}`);
+  } catch (error) {
+    console.error(`❌ Error creating agent:`, error);
+    throw new Error(`Failed to create agent: ${error instanceof Error ? error.message : String(error)}`);
+  }
   
   // Create executor
   const executor = new AgentExecutor({
     agent,
     tools,
     returnIntermediateSteps: true,
+    verbose: process.env.NODE_ENV !== 'production', // Enable verbose mode in non-production
   });
   
   // Store executor for future use
@@ -147,7 +151,19 @@ export async function POST(request: Request) {
     console.log(`📨 Received message for session ${sessionId}: "${message.substring(0, 100)}${message.length > 100 ? '...' : ''}"`);
     
     // Get or create executor
-    const executor = await getOrCreateExecutor(sessionId);
+    let executor;
+    let toolsAvailable = [];
+    try {
+      executor = await getOrCreateExecutor(sessionId);
+      // Capture tools for error reporting
+      toolsAvailable = executor.tools.map(t => t.name);
+    } catch (executorError) {
+      console.error(`❌ Error creating executor: ${executorError}`);
+      return NextResponse.json(
+        { error: 'Failed to initialize chat backend', details: executorError instanceof Error ? executorError.message : String(executorError) },
+        { status: 500 }
+      );
+    }
     
     // Get or create tool handler
     const toolHandler = new CaptureToolResultHandler(sessionId);
@@ -177,42 +193,70 @@ export async function POST(request: Request) {
     
     console.log(`🤖 Invoking executor for session ${sessionId}`);
     
-    // Execute with the agent
-    const response = await executor.invoke(
-      { input: inputToUse, chat_history: history },
-      { callbacks: [toolHandler] }
-    );
+    // Invoke the executor with the enhanced input
+    console.log("🤖 [enhanceUserInput] Enhanced input:", JSON.stringify(inputToUse));
     
-    // Extract response content
-    let responseContent = '';
-    if (typeof response === 'string') {
-      responseContent = response;
-    } else if (response.output) {
-      responseContent = String(response.output);
-    } else if (response.response) {
-      responseContent = String(response.response);
-    } else {
-      const firstKey = Object.keys(response)[0];
-      responseContent = firstKey ? String(response[firstKey]) : JSON.stringify(response);
+    try {
+      console.log("🧰 [API] About to invoke executor with input:", JSON.stringify(inputToUse));
+      const result = await executor.invoke({
+        input: inputToUse,
+        chat_history: history.map(msg => {
+          if (msg.type === 'human') {
+            return { role: 'human', content: msg.content };
+          } else {
+            return { role: 'assistant', content: msg.content };
+          }
+        }),
+        config: { callbacks: [toolHandler] },
+      });
+      console.log("✅ [API] Executor result:", JSON.stringify(result));
+      
+      // Extract response content
+      let responseContent = '';
+      if (typeof result === 'string') {
+        responseContent = result;
+      } else if (result.output) {
+        responseContent = String(result.output);
+      } else if (result.response) {
+        responseContent = String(result.response);
+      } else {
+        const firstKey = Object.keys(result)[0];
+        responseContent = firstKey ? String(result[firstKey]) : JSON.stringify(result);
+      }
+      
+      console.log(`📤 Generated response for session ${sessionId}: "${responseContent.substring(0, 100)}${responseContent.length > 100 ? '...' : ''}"`);
+      
+      // Add assistant response to history
+      history.push({ type: 'assistant', content: responseContent });
+      
+      // Limit history length to prevent memory issues (optional)
+      if (history.length > 50) {
+        const removed = history.splice(0, history.length - 50);
+        console.log(`📚 Trimmed chat history for session ${sessionId}, removed ${removed.length} oldest messages`);
+      }
+      
+      // Return response with session ID
+      return NextResponse.json({
+        response: responseContent,
+        sessionId,
+      });
+    } catch (error) {
+      console.error('❌ Error in executor:', error);
+      
+      // If the error is related to tool input, log more details
+      if (error instanceof Error && error.message && error.message.includes('tool input')) {
+        console.error('❌ Tool Input Error Details:', {
+          error: error.message,
+          trace: error.stack,
+          executor: executor?.name || 'Unknown'
+        });
+      }
+      
+      return NextResponse.json(
+        { error: 'Failed to process chat message', details: error instanceof Error ? error.message : String(error) },
+        { status: 500 }
+      );
     }
-    
-    console.log(`📤 Generated response for session ${sessionId}: "${responseContent.substring(0, 100)}${responseContent.length > 100 ? '...' : ''}"`);
-    
-    // Add assistant response to history
-    history.push({ type: 'assistant', content: responseContent });
-    
-    // Limit history length to prevent memory issues (optional)
-    if (history.length > 50) {
-      const removed = history.splice(0, history.length - 50);
-      console.log(`📚 Trimmed chat history for session ${sessionId}, removed ${removed.length} oldest messages`);
-    }
-    
-    // Return response with session ID
-    return NextResponse.json({
-      response: responseContent,
-      sessionId,
-    });
-    
   } catch (error) {
     console.error('❌ Error in chat API:', error);
     return NextResponse.json(

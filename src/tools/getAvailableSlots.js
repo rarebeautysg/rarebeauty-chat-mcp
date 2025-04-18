@@ -1,7 +1,7 @@
 import { Tool } from "@langchain/core/tools";
 import { z } from "zod";
 
-class GetAvailableSlotsTool extends Tool {
+export class GetAvailableSlotsTool extends Tool {
   constructor() {
     super();
     this.name = "getAvailableSlots";
