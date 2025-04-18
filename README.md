@@ -30,7 +30,7 @@ A conversational AI chat interface for Rare Beauty Professional salon in Singapo
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/rarebeauty-chat.git
+   git clone https://github.com/rarebeautysg/rarebeauty-chat.git
    cd rarebeauty-chat
    ```
 
