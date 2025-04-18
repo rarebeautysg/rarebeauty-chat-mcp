@@ -135,6 +135,15 @@ export async function POST(request: Request) {
       );
     }
     
+    // Handle special welcome message request
+    if (message === "__WELCOME__") {
+      console.log(`🌟 Sending welcome message for new session ${sessionId}`);
+      return NextResponse.json({
+        response: "Hello there! How are you doing today? Can I have your mobile number so I can better help you?",
+        sessionId
+      });
+    }
+    
     console.log(`📨 Received message for session ${sessionId}: "${message.substring(0, 100)}${message.length > 100 ? '...' : ''}"`);
     
     // Get or create executor

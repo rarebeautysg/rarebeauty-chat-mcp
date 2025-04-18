@@ -106,8 +106,59 @@ export default function Home() {
           console.error('Failed to parse stored messages:', e);
         }
       }
+    } else {
+      // If no existing session, get a welcome message
+      fetchWelcomeMessage();
     }
   }, []);
+  
+  // Fetch welcome message from the API
+  const fetchWelcomeMessage = async () => {
+    setIsLoading(true);
+    
+    try {
+      // Call the backend API to get initial welcome message
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          message: "__WELCOME__"  // Special token to indicate welcome message request
+        })
+      });
+      
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      
+      // Save the session ID
+      if (data.sessionId) {
+        setSessionId(data.sessionId);
+        localStorage.setItem('chatSessionId', data.sessionId);
+        console.log('📝 New session ID received and stored:', data.sessionId);
+      }
+      
+      // Add assistant welcome message
+      setMessages([{ 
+        role: 'assistant', 
+        content: data.response,
+        id: uuidv4()
+      }]);
+    } catch (error) {
+      console.error('❌ Error fetching welcome message:', error);
+      // Add default welcome message in case of error
+      setMessages([{ 
+        role: 'assistant', 
+        content: 'Hello there! How are you doing today? Can I have your mobile number so I can better help you?',
+        id: uuidv4()
+      }]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
   
   // Save messages to localStorage whenever they change
   useEffect(() => {
@@ -192,9 +243,10 @@ export default function Home() {
       setSessionId('');
       setErrorMessage('');
       
-      // Show reset message briefly
+      // Show reset message briefly, then fetch welcome message
       setTimeout(() => {
         setIsResetting(false);
+        fetchWelcomeMessage(); // Get a welcome message for the new chat
       }, 1000);
     }
   };

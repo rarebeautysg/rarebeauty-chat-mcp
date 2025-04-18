@@ -1,6 +1,7 @@
 import React from 'react';
 import Image from 'next/image';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Message } from './ChatInterface';
 
 interface MessageBubbleProps {
@@ -63,6 +64,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
           ) : (
             <div className="text-sm font-normal markdown-content">
               <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
                 components={{
                   p: renderParagraphs,
                   h1: ({ node, ...props }) => (
@@ -85,6 +87,24 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
                   ),
                   pre: ({ node, ...props }) => (
                     <pre className="bg-gray-100 p-2 rounded my-3 overflow-x-auto" {...props} />
+                  ),
+                  table: ({ node, ...props }) => (
+                    <table className="border-collapse w-full my-4" {...props} />
+                  ),
+                  thead: ({ node, ...props }) => (
+                    <thead className="bg-gray-100" {...props} />
+                  ),
+                  tbody: ({ node, ...props }) => (
+                    <tbody {...props} />
+                  ),
+                  tr: ({ node, ...props }) => (
+                    <tr className="border-b border-gray-200" {...props} />
+                  ),
+                  th: ({ node, ...props }) => (
+                    <th className="py-2 px-3 text-left font-bold" {...props} />
+                  ),
+                  td: ({ node, ...props }) => (
+                    <td className="py-2 px-3" {...props} />
                   ),
                   strong: ({ node, children, ...props }) => {
                     const content = String(children || '');

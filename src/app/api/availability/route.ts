@@ -1,10 +1,43 @@
 import { NextResponse } from 'next/server';
+import { calendar_v3 } from '@googleapis/calendar';
+import { JWT } from 'google-auth-library';
+import { TimeSlot, ServiceAccount } from '@/types/calendar';
 
 // Define types for the request
 interface AvailabilityRequest {
   date: string;
   serviceIds?: string[];
   [key: string]: any;
+}
+
+// Calendar service on the server side
+async function getCalendarService() {
+  try {
+    const serviceAccountJson = process.env.GOOGLE_SERVICE_ACCOUNT;
+    if (!serviceAccountJson) {
+      throw new Error('Google service account not configured');
+    }
+
+    const serviceAccount: ServiceAccount = JSON.parse(serviceAccountJson);
+    const calendarId = process.env.CALENDAR_ID;
+    
+    if (!calendarId) {
+      throw new Error('Calendar ID not configured');
+    }
+
+    const auth = new JWT({
+      email: serviceAccount.client_email,
+      key: serviceAccount.private_key,
+      scopes: ['https://www.googleapis.com/auth/calendar'],
+    });
+
+    const calendar = new calendar_v3.Calendar({ auth });
+    
+    return { calendar, calendarId };
+  } catch (error) {
+    console.error('Error initializing calendar service:', error);
+    throw error;
+  }
 }
 
 export async function POST(request: Request) {
@@ -32,9 +65,6 @@ export async function POST(request: Request) {
 
 async function handleAvailabilityRequest(request: Request) {
   try {
-    // Get the authorization token
-    const authToken = request.headers.get('Authorization') || '';
-    
     // Parse the request body
     const data: AvailabilityRequest = await request.json();
     console.log('📝 Availability request data:', data);
@@ -57,74 +87,72 @@ async function handleAvailabilityRequest(request: Request) {
       tomorrow.setDate(tomorrow.getDate() + 1);
       dateToUse = tomorrow.toISOString().split('T')[0];
     }
+
+    // Parse the date
+    const requestedDate = new Date(dateToUse);
+    if (isNaN(requestedDate.getTime())) {
+      return NextResponse.json({ error: 'Invalid date format' }, { status: 400 });
+    }
     
-    // Define the GraphQL query for fetching availability
-    const graphqlQuery = {
-      query: `
-        query GetAvailableSlots($date: String!, $serviceIds: [String]) {
-          availableSlots(date: $date, serviceIds: $serviceIds) {
-            date
-            slots
-          }
-        }
-      `,
-      variables: {
-        date: dateToUse,
-        serviceIds: data.serviceIds || []
+    // Setup start/end dates
+    const startDate = new Date(requestedDate);
+    startDate.setHours(10, 0, 0, 0); // 10 AM
+    
+    const endDate = new Date(requestedDate);
+    endDate.setHours(19, 0, 0, 0); // 7 PM
+    
+    console.log(`🔎 Checking calendar availability for ${dateToUse}`);
+    
+    try {
+      // Get calendar service
+      const { calendar, calendarId } = await getCalendarService();
+      
+      // Get calendar events for the day
+      const response = await calendar.events.list({
+        calendarId,
+        timeMin: startDate.toISOString(),
+        timeMax: endDate.toISOString(),
+        singleEvents: true,
+      });
+      
+      const events = response.data.items || [];
+      console.log(`Found ${events.length} existing events for the day`);
+      
+      // Calculate duration based on first service in serviceIds if available
+      let duration = 60; // Default 60 minutes
+      if (data.serviceIds && data.serviceIds.length > 0) {
+        // You can implement service duration logic here if needed
+        console.log(`Service IDs provided: ${data.serviceIds.join(', ')}`);
       }
-    };
-    
-    // Make the request to the actual API
-    const apiUrl = process.env.SOHO_API_URL || 'https://api.soho.sg/graphql';
-    console.log(`🔄 Calling SOHO API at ${apiUrl}`);
-    
-    const response = await fetch(apiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': authToken,
-        'X-Api-Key': process.env.SOHO_API_KEY || ''
-      },
-      body: JSON.stringify(graphqlQuery)
-    });
-    
-    // Handle API response
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`❌ SOHO API error: ${response.status} - ${errorText}`);
-      return NextResponse.json(
-        { error: `API error: ${response.status}`, details: errorText },
-        { status: response.status }
+      
+      // Find available slots
+      const { availableSlots } = await findAvailableTimeSlots(
+        startDate, endDate, events, duration
       );
+      
+      // Format all slots
+      const formattedSlots = availableSlots.map(formatTimeSlot);
+      
+      console.log(`✅ Found ${formattedSlots.length} available time slots`);
+      
+      return NextResponse.json({
+        success: true,
+        date: dateToUse,
+        availableSlots: formattedSlots
+      });
+    } catch (calendarError) {
+      console.error('❌ Calendar API error:', calendarError);
+      console.log('⚠️ Falling back to mock data for availability');
+      
+      // Fall back to mock data if calendar API fails
+      const mockData = generateMockAvailability(dateToUse);
+      
+      return NextResponse.json({
+        success: true,
+        date: dateToUse,
+        availableSlots: mockData.slots || []
+      });
     }
-    
-    const result = await response.json();
-    console.log('✅ SOHO API response:', result);
-    
-    // Handle GraphQL errors if any
-    if (result.errors) {
-      console.error('❌ GraphQL errors:', result.errors);
-      return NextResponse.json(
-        { error: 'GraphQL errors', details: result.errors },
-        { status: 400 }
-      );
-    }
-    
-    // If no real API is available, generate mock data for development
-    let availabilityData;
-    if (result.data?.availableSlots) {
-      availabilityData = result.data.availableSlots;
-    } else {
-      console.log('⚠️ Using mock data for availability');
-      availabilityData = generateMockAvailability(dateToUse);
-    }
-    
-    return NextResponse.json({
-      success: true,
-      date: dateToUse,
-      availableSlots: availabilityData.slots || []
-    });
-    
   } catch (error) {
     console.error('❌ Error processing availability request:', error);
     return NextResponse.json(
@@ -132,6 +160,57 @@ async function handleAvailabilityRequest(request: Request) {
       { status: 500 }
     );
   }
+}
+
+// Format time slot to string
+function formatTimeSlot(slot: TimeSlot): string {
+  const startTime = new Date(slot.startTime);
+  return `${startTime.getHours().toString().padStart(2, '0')}:${startTime.getMinutes().toString().padStart(2, '0')}`;
+}
+
+// Helper function to find available time slots
+async function findAvailableTimeSlots(
+  startDate: Date,
+  endDate: Date,
+  existingEvents: any[],
+  duration: number
+): Promise<{ availableSlots: TimeSlot[] }> {
+  const availableSlots: TimeSlot[] = [];
+  let currentTime = new Date(startDate);
+  
+  // Create busy time ranges from existing events
+  const busyRanges = existingEvents.map(event => ({
+    start: new Date(event.start.dateTime || event.start.date),
+    end: new Date(event.end.dateTime || event.end.date)
+  }));
+  
+  // Identify all possible slots and mark which ones are available
+  while (currentTime < endDate) {
+    const slotEndTime = new Date(currentTime.getTime() + duration * 60000);
+    
+    if (slotEndTime > endDate) break;
+    
+    const slot = {
+      startTime: new Date(currentTime),
+      endTime: new Date(slotEndTime)
+    };
+    
+    // Check if slot overlaps with any existing event
+    const isAvailable = !busyRanges.some(range => 
+      (currentTime >= range.start && currentTime < range.end) || 
+      (slotEndTime > range.start && slotEndTime <= range.end) ||
+      (currentTime <= range.start && slotEndTime >= range.end)
+    );
+    
+    if (isAvailable) {
+      availableSlots.push(slot);
+    }
+    
+    // Move to next 30-minute slot
+    currentTime = new Date(currentTime.getTime() + 30 * 60000);
+  }
+  
+  return { availableSlots };
 }
 
 // Helper function to generate mock availability data for development
