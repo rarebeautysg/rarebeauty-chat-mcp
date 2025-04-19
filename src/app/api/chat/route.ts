@@ -5,90 +5,12 @@ import { lookupUserTool, getAvailableSlotsTool, getServicesTool, bookAppointment
 import { ChatPromptTemplate, MessagesPlaceholder } from '@langchain/core/prompts';
 import { systemPrompt } from '@/prompts/systemPrompt';
 import { ToolResult } from '@/types/tools';
-import { BaseCallbackHandler } from "@langchain/core/callbacks/base";
 
 // Store executors and context in memory keyed by session ID
 export const executors = new Map<string, AgentExecutor>();
 export const toolResults = new Map<string, ToolResult[]>();
 export const userContexts = new Map<string, any>();
 export const chatHistories = new Map<string, Array<{ type: string; content: string }>>();
-
-// Custom handler to capture tool results and update user context
-class CaptureToolResultHandler extends BaseCallbackHandler {
-  sessionId: string;
-
-  constructor(sessionId: string) {
-    super();
-    this.sessionId = sessionId;
-  }
-
-  name = "CaptureToolResultHandler";
-
-  // Debug which callbacks are triggered
-  async handleChainStart(chain: any, inputs: any, runId: string) {
-    console.log(`🔄 Chain start for session ${this.sessionId}:`, chain.name || "unnamed chain");
-    return;
-  }
-
-  async handleToolStart(tool: any, input: any, runId: string) {
-    console.log(`🛠️ Tool start for session ${this.sessionId}:`, tool.name, "with input:", input);
-    return;
-  }
-
-  async handleLLMStart(llm: any, prompts: any, runId: string) {
-    console.log(`🧠 LLM start for session ${this.sessionId}`);
-    return;
-  }
-
-  async handleToolEnd(output: any, runId: string, parentRunId?: string) {
-    try {
-      console.log(`🛠️ Tool end for session ${this.sessionId}:`, output);
-      
-      let parsedOutput;
-      
-      // Handle different output formats
-      if (typeof output === 'string') {
-        try {
-          parsedOutput = JSON.parse(output);
-        } catch (e) {
-          // If not valid JSON, use as is
-          parsedOutput = { rawOutput: output };
-        }
-      } else {
-        parsedOutput = output;
-      }
-      
-      console.log(`🔍 Parsed tool output for session ${this.sessionId}:`, parsedOutput);
-      
-      // Get or initialize tool results for this session
-      if (!toolResults.has(this.sessionId)) {
-        toolResults.set(this.sessionId, []);
-      }
-      
-      const sessionToolResults = toolResults.get(this.sessionId)!;
-      sessionToolResults.push(parsedOutput);
-      
-      // Process user data from lookupUser tool results
-      if (parsedOutput && parsedOutput.resourceName) {
-        console.log('👤 Found user data in tool result for session', this.sessionId, ':', parsedOutput);
-        
-        // Save user data in memory for future tool calls
-        const updatedContext = {
-          resourceName: parsedOutput.resourceName,
-          name: parsedOutput.name,
-          mobile: parsedOutput.mobile,
-          updatedAt: new Date().toISOString()
-        };
-        
-        userContexts.set(this.sessionId, updatedContext);
-        
-        console.log('🔑 Stored user context for session', this.sessionId, ':', updatedContext);
-      }
-    } catch (e) {
-      console.error('❌ Error processing tool output:', e);
-    }
-  }
-}
 
 async function getOrCreateExecutor(sessionId: string): Promise<AgentExecutor> {
   // Return existing executor if it exists
@@ -141,16 +63,11 @@ async function getOrCreateExecutor(sessionId: string): Promise<AgentExecutor> {
     console.error(`❌ Error creating agent:`, error);
     throw new Error(`Failed to create agent: ${error instanceof Error ? error.message : String(error)}`);
   }
-
-  // Get or create tool handler
-  const toolHandler = new CaptureToolResultHandler(sessionId);
-
   
   // Create executor
   const executor = new AgentExecutor({
     agent,
     tools,
-    callbacks: [toolHandler],
     returnIntermediateSteps: true,
     // verbose: process.env.NODE_ENV !== 'production', // Enable verbose mode in non-production
   });
@@ -202,9 +119,6 @@ export async function POST(request: Request) {
       );
     }
     
-// Get or create tool handler
-    const toolHandler = new CaptureToolResultHandler(sessionId);
-        
     // Get user context if it exists from memory
     const userContext = userContexts.get(sessionId);
     if (userContext) {
@@ -236,22 +150,6 @@ export async function POST(request: Request) {
     try {
       console.log("🧰 [API] About to invoke executor with input:", JSON.stringify(inputToUse));
       
-      // Add a direct test callback
-      const testCallback = {
-        handleToolStart: (tool: any, input: any) => {
-          console.log("🔧 DIRECT TEST - Tool start:", tool.name);
-        },
-        handleToolEnd: (output: any) => {
-          console.log("🔧 DIRECT TEST - Tool end:", typeof output, output);
-        },
-        handleLLMStart: () => {
-          console.log("🔧 DIRECT TEST - LLM start");
-        },
-        handleChainStart: (chain: any) => {
-          console.log("🔧 DIRECT TEST - Chain start:", chain.name);
-        }
-      };
-      
       const result = await executor.invoke({
         input: inputToUse,
         chat_history: history.map(msg => {
@@ -261,7 +159,6 @@ export async function POST(request: Request) {
             return { role: 'assistant', content: msg.content };
           }
         }),
-        callbacks: [toolHandler, testCallback],
       });
       console.log("✅ [API] Executor result:", JSON.stringify(result));
       
@@ -284,6 +181,13 @@ export async function POST(request: Request) {
               } else {
                 parsedObservation = observation;
               }
+              
+              // Store all tool results
+              if (!toolResults.has(sessionId)) {
+                toolResults.set(sessionId, []);
+              }
+              const sessionToolResults = toolResults.get(sessionId)!;
+              sessionToolResults.push(parsedObservation);
               
               // Process user data from lookupUser tool
               if (step.action.tool === 'lookupUser' && parsedObservation && parsedObservation.resourceName) {
