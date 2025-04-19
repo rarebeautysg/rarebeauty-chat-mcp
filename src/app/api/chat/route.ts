@@ -24,11 +24,41 @@ class CaptureToolResultHandler extends BaseCallbackHandler {
 
   name = "CaptureToolResultHandler";
 
-  async handleToolEnd(output: string) {
+  // Debug which callbacks are triggered
+  async handleChainStart(chain: any, inputs: any, runId: string) {
+    console.log(`🔄 Chain start for session ${this.sessionId}:`, chain.name || "unnamed chain");
+    return;
+  }
+
+  async handleToolStart(tool: any, input: any, runId: string) {
+    console.log(`🛠️ Tool start for session ${this.sessionId}:`, tool.name, "with input:", input);
+    return;
+  }
+
+  async handleLLMStart(llm: any, prompts: any, runId: string) {
+    console.log(`🧠 LLM start for session ${this.sessionId}`);
+    return;
+  }
+
+  async handleToolEnd(output: any, runId: string, parentRunId?: string) {
     try {
-      console.log(`🛠️ Tool output for session ${this.sessionId}:`, output);
+      console.log(`🛠️ Tool end for session ${this.sessionId}:`, output);
       
-      const parsedOutput = typeof output === 'string' ? JSON.parse(output) : output;
+      let parsedOutput;
+      
+      // Handle different output formats
+      if (typeof output === 'string') {
+        try {
+          parsedOutput = JSON.parse(output);
+        } catch (e) {
+          // If not valid JSON, use as is
+          parsedOutput = { rawOutput: output };
+        }
+      } else {
+        parsedOutput = output;
+      }
+      
+      console.log(`🔍 Parsed tool output for session ${this.sessionId}:`, parsedOutput);
       
       // Get or initialize tool results for this session
       if (!toolResults.has(this.sessionId)) {
@@ -111,11 +141,16 @@ async function getOrCreateExecutor(sessionId: string): Promise<AgentExecutor> {
     console.error(`❌ Error creating agent:`, error);
     throw new Error(`Failed to create agent: ${error instanceof Error ? error.message : String(error)}`);
   }
+
+  // Get or create tool handler
+  const toolHandler = new CaptureToolResultHandler(sessionId);
+
   
   // Create executor
   const executor = new AgentExecutor({
     agent,
     tools,
+    callbacks: [toolHandler],
     returnIntermediateSteps: true,
     // verbose: process.env.NODE_ENV !== 'production', // Enable verbose mode in non-production
   });
@@ -167,9 +202,9 @@ export async function POST(request: Request) {
       );
     }
     
-    // Get or create tool handler
+// Get or create tool handler
     const toolHandler = new CaptureToolResultHandler(sessionId);
-    
+        
     // Get user context if it exists from memory
     const userContext = userContexts.get(sessionId);
     if (userContext) {
@@ -200,6 +235,23 @@ export async function POST(request: Request) {
     
     try {
       console.log("🧰 [API] About to invoke executor with input:", JSON.stringify(inputToUse));
+      
+      // Add a direct test callback
+      const testCallback = {
+        handleToolStart: (tool: any, input: any) => {
+          console.log("🔧 DIRECT TEST - Tool start:", tool.name);
+        },
+        handleToolEnd: (output: any) => {
+          console.log("🔧 DIRECT TEST - Tool end:", typeof output, output);
+        },
+        handleLLMStart: () => {
+          console.log("🔧 DIRECT TEST - LLM start");
+        },
+        handleChainStart: (chain: any) => {
+          console.log("🔧 DIRECT TEST - Chain start:", chain.name);
+        }
+      };
+      
       const result = await executor.invoke({
         input: inputToUse,
         chat_history: history.map(msg => {
@@ -209,9 +261,52 @@ export async function POST(request: Request) {
             return { role: 'assistant', content: msg.content };
           }
         }),
-        config: { callbacks: [toolHandler] },
+        callbacks: [toolHandler, testCallback],
       });
       console.log("✅ [API] Executor result:", JSON.stringify(result));
+      
+      // Manually extract and process tool results from intermediateSteps
+      if (result.intermediateSteps) {
+        console.log("🔍 Found intermediate steps:", result.intermediateSteps.length);
+        for (const step of result.intermediateSteps) {
+          if (step.action?.tool && step.observation) {
+            console.log(`🔄 Processing tool result manually - Tool: ${step.action.tool}`);
+            try {
+              let observation = step.observation;
+              // Extract tool results
+              let parsedObservation;
+              if (typeof observation === 'string') {
+                try {
+                  parsedObservation = JSON.parse(observation);
+                } catch (e) {
+                  parsedObservation = { rawOutput: observation };
+                }
+              } else {
+                parsedObservation = observation;
+              }
+              
+              // Process user data from lookupUser tool
+              if (step.action.tool === 'lookupUser' && parsedObservation && parsedObservation.resourceName) {
+                console.log('👤 Manually found user data:', parsedObservation);
+                
+                // Save user data in memory for future tool calls
+                const updatedContext = {
+                  resourceName: parsedObservation.resourceName,
+                  name: parsedObservation.name,
+                  mobile: parsedObservation.mobile,
+                  updatedAt: new Date().toISOString()
+                };
+                
+                userContexts.set(sessionId, updatedContext);
+                
+                console.log('🔑 Manually stored user context for session', sessionId, ':', updatedContext);
+              }
+            } catch (e) {
+              console.error('❌ Error manually processing step:', e);
+            }
+          }
+        }
+      }
       
       // Extract response content
       let responseContent = '';
