@@ -5,6 +5,7 @@ import { lookupUserTool, getAvailableSlotsTool, getServicesTool, bookAppointment
 import { ChatPromptTemplate, MessagesPlaceholder } from '@langchain/core/prompts';
 import { systemPrompt } from '@/prompts/systemPrompt';
 import { ToolResult } from '@/types/tools';
+import { BaseCallbackHandler } from "@langchain/core/callbacks/base";
 
 // Store executors and context in memory keyed by session ID
 export const executors = new Map<string, AgentExecutor>();
@@ -13,10 +14,11 @@ export const userContexts = new Map<string, any>();
 export const chatHistories = new Map<string, Array<{ type: string; content: string }>>();
 
 // Custom handler to capture tool results and update user context
-class CaptureToolResultHandler {
+class CaptureToolResultHandler extends BaseCallbackHandler {
   sessionId: string;
 
   constructor(sessionId: string) {
+    super();
     this.sessionId = sessionId;
   }
 
@@ -115,7 +117,7 @@ async function getOrCreateExecutor(sessionId: string): Promise<AgentExecutor> {
     agent,
     tools,
     returnIntermediateSteps: true,
-    verbose: process.env.NODE_ENV !== 'production', // Enable verbose mode in non-production
+    // verbose: process.env.NODE_ENV !== 'production', // Enable verbose mode in non-production
   });
   
   // Store executor for future use

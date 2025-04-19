@@ -5,40 +5,6 @@ import { v4 as uuidv4 } from 'uuid';
 import { ChatInterface, Message } from '@/components/ChatInterface';
 import { Loading } from '@/components/Loading';
 
-// Function to extract service name from current input or recent chat history
-function extractServiceFromHistory(currentInput: string, messages: Message[]) {
-  // List of service names to check for
-  const serviceNames = [
-    'facial', 'massage', 'lashes', 'dense lashes', 'brows', 
-    'waxing', 'beauty', 'nails', 'haircut', 'blowout', 'hair color'
-  ];
-  
-  // First, check the current input
-  const normalizedInput = currentInput.toLowerCase();
-  for (const service of serviceNames) {
-    if (normalizedInput.includes(service)) {
-      console.log(`📋 Found service in current input: ${service}`);
-      return service;
-    }
-  }
-  
-  // If not found in current input, check the last 5 messages
-  const recentMessages = messages.slice(-5);
-  for (const message of recentMessages) {
-    const normalizedContent = message.content.toLowerCase();
-    for (const service of serviceNames) {
-      if (normalizedContent.includes(service)) {
-        console.log(`📋 Found service in chat history: ${service}`);
-        return service;
-      }
-    }
-  }
-  
-  // No service found
-  console.log('📋 No service found in input or history');
-  return null;
-}
-
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
