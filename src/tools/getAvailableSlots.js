@@ -46,7 +46,7 @@ export class GetAvailableSlotsTool extends Tool {
       } else {
         baseUrl = process.env.VERCEL_URL 
           ? `${process.env.VERCEL_URL}`
-          : 'http://localhost:3000';
+          : 'http://localhost:3002';
       }
       
       // Call the availability API

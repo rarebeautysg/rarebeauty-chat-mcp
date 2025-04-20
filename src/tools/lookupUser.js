@@ -31,7 +31,7 @@ export class LookupUserTool extends StructuredTool {
       } else {
         baseUrl = process.env.VERCEL_URL 
           ? `${process.env.VERCEL_URL}`
-          : 'http://localhost:3000';
+          : 'http://localhost:3002';
       }
       
       // Call our contacts API

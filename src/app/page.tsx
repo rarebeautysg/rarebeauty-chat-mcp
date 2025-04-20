@@ -14,6 +14,16 @@ export default function Home() {
   const [sessionId, setSessionId] = useState<string>('');
   const [isResetting, setIsResetting] = useState<boolean>(false);
   const [isClearingContext, setIsClearingContext] = useState<boolean>(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+  
+  // Scroll to bottom whenever messages change
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
   
   // Retrieve stored session ID on component mount
   useEffect(() => {
@@ -309,6 +319,7 @@ export default function Home() {
                 isFirstMessage={index === 0}
               />
             ))}
+            <div ref={messagesEndRef} />
           </div>
         )}
       </div>
