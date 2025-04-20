@@ -53,7 +53,7 @@ A conversational AI chat interface for Rare Beauty Professional salon in Singapo
    yarn dev
    ```
 
-5. Open [http://localhost:3000](http://localhost:3000) in your browser to see the application.
+5. Open [http://localhost:3002](http://localhost:3002) in your browser to see the application.
 
 ## Development
 

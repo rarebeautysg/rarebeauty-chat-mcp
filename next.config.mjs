@@ -8,6 +8,10 @@ const nextConfig = {
     // your project has ESLint errors.
     ignoreDuringBuilds: true,
   },
+  // Make environment variables available
+  env: {
+    SOHO_API_URL: process.env.SOHO_API_URL,
+  },
 };
 
 export default nextConfig; 

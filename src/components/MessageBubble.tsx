@@ -7,11 +7,13 @@ import { Message } from './ChatInterface';
 interface MessageBubbleProps {
   message: Message;
   isLastMessage?: boolean;
+  isFirstMessage?: boolean;
 }
 
 export const MessageBubble: React.FC<MessageBubbleProps> = ({ 
   message, 
-  isLastMessage = false 
+  isLastMessage = false,
+  isFirstMessage = false
 }) => {
   // Add a custom renderer for paragraphs to add more spacing
   const renderParagraphs = ({
@@ -21,78 +23,80 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
     // Check if this paragraph contains a category header
     const content = String(props.children || '');
     const isCategoryHeader = /^(\*\*)?(?:Lashes|Facial|Threading|Waxing|Skin)(\*\*)?$/.test(content.trim());
-    return <p className={isCategoryHeader ? "font-bold text-lg mt-4 mb-2" : "my-3"} {...props} />;
+    return <p className={isCategoryHeader ? "font-bold text-base sm:text-lg mt-3 sm:mt-4 mb-1 sm:mb-2" : "my-2 sm:my-3"} {...props} />;
   };
 
   return (
     <div
-      className={`flex items-start gap-2.5 mb-4 ${
+      className={`flex items-start gap-2 sm:gap-3 px-3 py-2 ${
         message.role === 'user' ? 'flex-row-reverse' : ''
-      }`}
+      } ${isFirstMessage ? 'mt-2' : ''}`}
     >
       <div
-        className={`relative w-8 h-8 overflow-hidden ${
-          message.role === 'user' ? 'bg-pink-100' : 'bg-white'
-        } rounded-full flex items-center justify-center`}
+        className={`relative w-7 h-7 sm:w-9 sm:h-9 overflow-hidden ${
+          message.role === 'user' ? 'bg-pink-100 ring-1 ring-pink-200' : 'bg-white ring-1 ring-gray-200'
+        } rounded-full flex items-center justify-center shadow-sm`}
       >
         {message.role === 'user' ? (
-          <span className="text-pink-600 text-sm font-semibold">U</span>
+          <span className="text-pink-600 text-xs sm:text-sm font-semibold">U</span>
         ) : (
           <Image
             src="/rb-logo.png"
             alt="Rare Beauty logo"
-            width={32}
-            height={32}
+            width={36}
+            height={36}
             className="object-contain"
           />
         )}
       </div>
       <div
-        className={`flex flex-col w-full max-w-[80%] leading-1.5 ${
+        className={`flex flex-col w-full max-w-[85%] sm:max-w-[80%] leading-1.5 ${
           message.role === 'user' ? 'items-end' : ''
         }`}
       >
         <div
-          className={`p-4 ${
+          className={`p-3 sm:p-4 ${
             message.role === 'user'
-              ? 'bg-pink-500 text-white rounded-s-xl rounded-ee-xl'
-              : 'bg-gray-100 text-gray-900 rounded-e-xl rounded-es-xl'
+              ? 'bg-pink-500 text-white rounded-s-xl rounded-ee-xl shadow-sm'
+              : 'bg-gray-100 text-gray-900 rounded-e-xl rounded-es-xl shadow-sm'
           }`}
         >
           {message.role === 'user' ? (
-            <p className="text-sm font-normal">{message.content}</p>
+            <p className="text-sm sm:text-base font-normal">{message.content}</p>
           ) : (
-            <div className="text-sm font-normal markdown-content">
+            <div className="text-xs sm:text-sm font-normal markdown-content">
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 components={{
                   p: renderParagraphs,
                   h1: ({ node, ...props }) => (
-                    <h1 className="text-xl font-bold mt-4 mb-2" {...props} />
+                    <h1 className="text-base sm:text-xl font-bold mt-4 mb-2" {...props} />
                   ),
                   h2: ({ node, ...props }) => (
-                    <h2 className="text-lg font-bold mt-4 mb-2" {...props} />
+                    <h2 className="text-sm sm:text-lg font-bold mt-3 mb-2" {...props} />
                   ),
                   h3: ({ node, ...props }) => (
-                    <h3 className="text-md font-bold mt-3 mb-1" {...props} />
+                    <h3 className="text-sm font-semibold mt-2 mb-1" {...props} />
                   ),
                   ul: ({ node, ...props }) => (
-                    <ul className="list-none pl-0 my-3" {...props} />
+                    <ul className="list-disc pl-4 my-2 sm:my-3 space-y-1" {...props} />
                   ),
                   ol: ({ node, ...props }) => (
-                    <ol className="list-decimal pl-5 my-3" {...props} />
+                    <ol className="list-decimal pl-5 my-2 sm:my-3 space-y-1" {...props} />
                   ),
                   li: ({ node, ...props }) => (
-                    <li className="my-2" {...props} />
+                    <li className="my-1" {...props} />
                   ),
                   pre: ({ node, ...props }) => (
-                    <pre className="bg-gray-100 p-2 rounded my-3 overflow-x-auto" {...props} />
+                    <pre className="bg-gray-200 p-2 rounded my-2 overflow-x-auto text-xs font-mono" {...props} />
                   ),
                   table: ({ node, ...props }) => (
-                    <table className="border-collapse w-full my-4" {...props} />
+                    <div className="overflow-x-auto my-3 rounded">
+                      <table className="border-collapse w-full text-xs sm:text-sm" {...props} />
+                    </div>
                   ),
                   thead: ({ node, ...props }) => (
-                    <thead className="bg-gray-100" {...props} />
+                    <thead className="bg-gray-200" {...props} />
                   ),
                   tbody: ({ node, ...props }) => (
                     <tbody {...props} />
@@ -101,10 +105,10 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
                     <tr className="border-b border-gray-200" {...props} />
                   ),
                   th: ({ node, ...props }) => (
-                    <th className="py-2 px-3 text-left font-bold" {...props} />
+                    <th className="py-1.5 px-3 text-left font-bold" {...props} />
                   ),
                   td: ({ node, ...props }) => (
-                    <td className="py-2 px-3" {...props} />
+                    <td className="py-1.5 px-3" {...props} />
                   ),
                   strong: ({ node, children, ...props }) => {
                     const content = String(children || '');
@@ -112,7 +116,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
                       content.trim()
                     );
                     return isCategoryHeader ? (
-                      <strong className="block text-lg mt-4 mb-2" {...props}>
+                      <strong className="block text-sm sm:text-lg mt-3 sm:mt-4 mb-1 sm:mb-2" {...props}>
                         {children}
                       </strong>
                     ) : (
@@ -126,16 +130,16 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
             </div>
           )}
         </div>
-        <div className="flex items-center mt-1">
-          <span className="text-xs text-gray-500">
+        <div className="flex items-center mt-0.5 sm:mt-1">
+          <span className="text-[10px] sm:text-xs text-gray-500">
             {message.role === 'user' ? 'You' : 'Rare Beauty'}
           </span>
           
           {isLastMessage && (
-            <div className="flex items-center gap-1 ml-2">
-              <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
-              <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
-              <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"></div>
+            <div className="flex items-center gap-0.5 sm:gap-1 ml-1 sm:ml-2">
+              <div className="w-1 h-1 sm:w-1.5 sm:h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+              <div className="w-1 h-1 sm:w-1.5 sm:h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+              <div className="w-1 h-1 sm:w-1.5 sm:h-1.5 bg-gray-400 rounded-full animate-bounce"></div>
             </div>
           )}
         </div>

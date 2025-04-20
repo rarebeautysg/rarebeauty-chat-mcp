@@ -82,7 +82,7 @@ async function handleBookingRequest(request: Request): Promise<Response> {
     console.log('📝 GraphQL request:', JSON.stringify(graphqlRequest));
     
     // Get the SOHO API URL
-    const apiUrl = process.env.SOHO_API_URL || 'https://api.soho.sg/graphql';
+    const apiUrl = process.env.SOHO_API_URL || '';
     
     // Call the SOHO API
     const result = await callSOHOAPI(apiUrl, authToken, graphqlRequest);

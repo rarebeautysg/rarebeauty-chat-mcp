@@ -4,6 +4,8 @@ import { useState, useRef, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { ChatInterface, Message } from '@/components/ChatInterface';
 import { Loading } from '@/components/Loading';
+import { MessageBubble } from '@/components/MessageBubble';
+import { ChatInput } from '@/components/ChatInput';
 
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -264,47 +266,63 @@ export default function Home() {
   };
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-between p-4">
-      <div className="z-10 w-full max-w-4xl bg-white rounded-lg shadow-xl overflow-hidden h-[calc(100vh-2rem)]">
-        <div className="p-4 bg-pink-100 border-b border-pink-200 flex justify-between items-center">
-          <h1 className="text-xl font-bold text-pink-900">Rare Beauty Chat</h1>
-          <div className="flex space-x-2">
-            {sessionId && (
-              <button 
-                onClick={handleClearContext}
-                disabled={isClearingContext || isResetting}
-                className="px-3 py-1 text-sm bg-purple-500 hover:bg-purple-600 text-white rounded-md transition-colors"
-              >
-                {isClearingContext ? <Loading text="Clearing" size="sm" /> : 'Clear Context'}
-              </button>
-            )}
+    <main className="flex min-h-screen flex-col items-center justify-start p-0 m-0 bg-gray-100">
+      {/* Fixed header */}
+      <div className="fixed top-0 left-0 right-0 z-30 px-2 pt-10 pb-2 bg-gradient-to-r from-pink-500 to-pink-600 border-b border-pink-700 flex justify-between items-center">
+        <h1 className="text-lg font-bold text-white flex items-center">
+          <img src="/rb-logo.png" alt="Rare Beauty Logo" className="w-6 h-6 mr-2" />
+          Rare Beauty Assistant
+        </h1>
+        <div className="flex space-x-2">
+          {sessionId && (
             <button 
-              onClick={handleResetChat}
-              disabled={isResetting}
-              className="px-3 py-1 text-sm bg-pink-500 hover:bg-pink-600 text-white rounded-md transition-colors"
+              onClick={handleClearContext}
+              disabled={isClearingContext || isResetting}
+              className="px-2 py-1 text-xs bg-pink-700 hover:bg-pink-800 text-white rounded-md transition-colors shadow-sm"
             >
-              {isResetting ? <Loading text="Resetting" size="sm" /> : 'New Chat'}
+              {isClearingContext ? <Loading text="Clearing" size="sm" /> : 'Clear'}
             </button>
-          </div>
+          )}
+          <button 
+            onClick={handleResetChat}
+            disabled={isResetting}
+            className="px-2 py-1 text-xs bg-pink-800 hover:bg-pink-900 text-white rounded-md transition-colors shadow-sm"
+          >
+            {isResetting ? <Loading text="Resetting" size="sm" /> : 'New'}
+          </button>
         </div>
-        
+      </div>
+      
+      {/* Chat content area with fixed positioning */}
+      <div className="fixed top-[70px] bottom-[80px] left-0 right-0 z-10 bg-white overflow-y-auto pt-2">
         {isResetting ? (
-          <div className="h-[calc(100%-4rem)] flex items-center justify-center">
+          <div className="h-full flex items-center justify-center">
             <Loading text="Starting new chat..." size="lg" />
           </div>
         ) : (
-          <div className="h-[calc(100%-4rem)]">
-            <ChatInterface
-              messages={messages}
-              onSendMessage={handleSendMessage}
-              isLoading={isLoading}
-              placeholder="Ask about services or book an appointment..."
-            />
+          <div className="h-full pb-4">
+            {messages.map((message, index) => (
+              <MessageBubble
+                key={message.id}
+                message={message}
+                isLastMessage={index === messages.length - 1 && isLoading}
+                isFirstMessage={index === 0}
+              />
+            ))}
           </div>
         )}
+      </div>
+      
+      {/* Fixed input area at bottom */}
+      <div className="fixed bottom-0 left-0 right-0 z-20 bg-gray-50 border-t p-3">
+        <ChatInput
+          onSubmit={handleSendMessage}
+          isLoading={isLoading}
+          placeholder="Type here..."
+        />
         
         {errorMessage && (
-          <div className="p-2 bg-red-100 text-red-700 text-sm">
+          <div className="mt-2 p-2 bg-red-100 text-red-700 text-sm border-t border-red-200">
             {errorMessage}
           </div>
         )}

@@ -4,7 +4,7 @@ Description: 'CloudFormation template for Rare Beauty Chat application'
 Parameters:
   ContainerPort:
     Type: Number
-    Default: 3000
+    Default: 3002
     Description: Port on which the container will listen
   
   ImageUri:

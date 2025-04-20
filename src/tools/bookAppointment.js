@@ -133,8 +133,8 @@ export class BookAppointmentTool extends StructuredTool {
         baseUrl = window.location.origin;
       } else {
         baseUrl = process.env.VERCEL_URL 
-          ? `https://${process.env.VERCEL_URL}`
-          : 'http://localhost:3000';
+          ? `${process.env.VERCEL_URL}`
+          : 'http://localhost:3002';
       }
       
       // Create the request that matches our new API format

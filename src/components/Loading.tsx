@@ -16,7 +16,7 @@ export const Loading: React.FC<LoadingProps> = ({
   };
 
   return (
-    <div className="flex items-center justify-center gap-3 text-gray-500">
+    <div className="flex items-center justify-center gap-3 text-pink-500">
       <svg 
         className={`${sizeClasses[size]} animate-spin`} 
         viewBox="0 0 24 24"

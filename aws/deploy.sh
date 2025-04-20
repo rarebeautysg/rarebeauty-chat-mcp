@@ -8,6 +8,7 @@ ECS_CLUSTER="SOHO-APPT"
 ECS_SERVICE="rarebeauty-chat-service"
 TASK_FAMILY="rarebeauty-chat-task"
 IMAGE_TAG="latest"
+AWS_ACCOUNT_ID="292376945194"
 
 # Login to AWS ECR
 echo "Logging in to Amazon ECR..."
@@ -15,7 +16,7 @@ aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --
 
 # Build the Docker image
 echo "Building the Docker image..."
-docker build -t $ECR_REPOSITORY:$IMAGE_TAG .
+docker build --platform linux/amd64 -t $ECR_REPOSITORY:$IMAGE_TAG .
 
 # Tag the image for ECR
 echo "Tagging the image for ECR..."

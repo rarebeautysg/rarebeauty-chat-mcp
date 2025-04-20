@@ -55,13 +55,12 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       <form onSubmit={handleSubmit} className="relative">
         <textarea
           ref={textareaRef}
-          className="w-full p-4 pr-16 bg-white border border-gray-200 rounded-xl shadow-sm focus:ring-2 focus:ring-pink-200 focus:outline-none resize-none"
-          rows={2}
-          placeholder={placeholder}
+          className="w-full h-10 sm:h-14 p-2 pr-14 bg-white border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-pink-500 focus:border-pink-500 resize-none"
+          placeholder={placeholder || "Type a message..."}
           value={inputValue}
           onChange={(e) => setInputValue(e.target.value)}
           onKeyDown={handleKeyDown}
-          disabled={isLoading}
+          readOnly={isLoading}
         ></textarea>
         <button
           type="submit"
@@ -70,10 +69,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             isLoading || !inputValue.trim() 
               ? 'bg-gray-200 text-gray-500 cursor-not-allowed' 
               : 'bg-pink-500 text-white hover:bg-pink-600'
-          } transition-colors duration-200`}
+          } transition-colors duration-200 shadow-sm`}
+          aria-label="Send message"
         >
           {isLoading ? (
-            <svg className="w-6 h-6 animate-spin" viewBox="0 0 24 24">
+            <svg className="w-5 h-5 sm:w-6 sm:h-6 animate-spin" viewBox="0 0 24 24">
               <circle
                 className="opacity-25"
                 cx="12"
@@ -91,7 +91,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             </svg>
           ) : (
             <svg
-              className="w-6 h-6"
+              className="w-5 h-5 sm:w-6 sm:h-6"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
