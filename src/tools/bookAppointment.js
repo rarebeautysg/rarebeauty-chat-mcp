@@ -11,6 +11,53 @@ const BookAppointmentSchema = z.object({
   resourceName: z.string().describe("resourceName of the person booking")
 });
 
+// Cache for public holidays
+let publicHolidaysCache = null;
+let lastFetchTime = 0;
+const CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+
+// Function to fetch Singapore public holidays from data.gov.sg
+async function fetchPublicHolidays() {
+  // Check cache first
+  const now = Date.now();
+  if (publicHolidaysCache && (now - lastFetchTime < CACHE_DURATION)) {
+    console.log('📅 Using cached public holidays data (bookAppointment)');
+    return publicHolidaysCache;
+  }
+  
+  try {
+    console.log('📅 Fetching Singapore public holidays from data.gov.sg (bookAppointment)');
+    const response = await fetch('https://data.gov.sg/api/action/datastore_search?resource_id=d_3751791452397f1b1c80c451447e40b7');
+    
+    if (!response.ok) {
+      throw new Error(`Failed to fetch public holidays: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    if (!data.success || !data.result || !data.result.records) {
+      throw new Error('Invalid response format from data.gov.sg API');
+    }
+    
+    // Transform the data to a simpler format
+    const holidays = data.result.records.map((record) => ({
+      date: record.date,
+      holiday: record.holiday
+    }));
+    
+    // Update cache
+    publicHolidaysCache = holidays;
+    lastFetchTime = now;
+    
+    console.log(`📅 Fetched ${holidays.length} public holidays (bookAppointment)`);
+    return holidays;
+  } catch (error) {
+    console.error('❌ Error fetching public holidays:', error);
+    // Return empty array if there's an error, so the app still works
+    return [];
+  }
+}
+
 export class BookAppointmentTool extends StructuredTool {
   constructor() {
     super();
@@ -65,6 +112,30 @@ export class BookAppointmentTool extends StructuredTool {
 
     const formattedDate = requestedDate.toISOString().split('T')[0];
     console.log(`📅 Formatted date: ${formattedDate}`);
+
+    // Check if requested date is a Sunday
+    const dayOfWeek = requestedDate.getDay();
+    if (dayOfWeek === 0) {
+      console.log('❌ Booking attempted for Sunday, which is closed');
+      return JSON.stringify({
+        success: false,
+        error: "Cannot book on Sunday",
+        message: "I'm sorry, we're closed on Sundays. Please choose another day."
+      });
+    }
+    
+    // Check if requested date is a public holiday
+    const publicHolidays = await fetchPublicHolidays();
+    const holidayMatch = publicHolidays.find(holiday => holiday.date === formattedDate);
+    
+    if (holidayMatch) {
+      console.log(`❌ Booking attempted for ${holidayMatch.holiday} public holiday`);
+      return JSON.stringify({
+        success: false,
+        error: "Cannot book on public holiday",
+        message: `I'm sorry, we're closed on ${holidayMatch.holiday}. Please choose another day.`
+      });
+    }
 
     const processedServiceIds = [];
     let totalDuration = 0;

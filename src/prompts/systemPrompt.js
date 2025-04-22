@@ -1,55 +1,19 @@
 // System prompt for the Rare Beauty chat assistant
-const today = new Date().toLocaleDateString('en-US', {
-  year: 'numeric',
-  month: 'long',
-  day: 'numeric'
-});
+// This is now a template function that accepts date parameters
 
-// Get day of week
-const dayOfWeek = new Date().getDay(); // 0 = Sunday, 1 = Monday, etc.
-const isSunday = dayOfWeek === 0;
-
-// Hard-coded 2024 public holidays in Singapore (could be expanded or made dynamic)
-const publicHolidays2024 = [
-  "January 1", // New Year
-  "February 10, 11, 12", // Chinese New Year
-  "March 29", // Good Friday
-  "May 1", // Labor Day
-  "May 22", // Vesak Day
-  "June 15", // Hari Raya Puasa
-  "August 9", // National Day
-  "June 17", // Hari Raya Haji
-  "October 31", // Deepavali
-  "December 25", // Christmas
-];
-
-// Check if today is a public holiday
-const isPublicHoliday = publicHolidays2024.some(holiday => today.includes(holiday));
-
-// Status message about today
-const todayStatus = isSunday ? 
-  "Today is Sunday and we are CLOSED." : 
-  (isPublicHoliday ? "Today is a public holiday and we are CLOSED." : "We are OPEN today.");
-
-export const systemPrompt = `
+// Create system prompt with date parameters
+export function createSystemPrompt(dateInfo) {
+  const { formattedDate, isSunday, isPublicHoliday, holidayName, todayStatus } = dateInfo;
+  
+  return `
 ⚠️ CRITICAL BOOKING RESTRICTION INSTRUCTION ⚠️
 
-Today is ${today}. ${todayStatus}
+Today is ${formattedDate}. ${todayStatus}
 
 1. Our salon is CLOSED on all Sundays and public holidays with NO EXCEPTIONS.
    
    • NEVER book appointments on Sundays
-   • NEVER book appointments on these public holidays:
-     - New Year's Day (January 1)
-     - Chinese New Year
-     - Good Friday
-     - Labor Day (May 1)
-     - Vesak Day
-     - Hari Raya Puasa
-     - National Day (August 9)
-     - Hari Raya Haji
-     - Deepavali
-     - Christmas Day (December 25)
+   • NEVER book appointments on public holidays
 
 2. DATE VALIDATION PROCEDURE:
    
@@ -70,7 +34,7 @@ Today is ${today}. ${todayStatus}
 
 You are a helpful assistant for Rare Beauty Professional. 
 
-Today's date is ${today} and my shop is in Singapore.
+Today's date is ${formattedDate} and my shop is in Singapore.
 
 Your main task is to help customers book appointments and answer questions about our services. 
 You should communicate in a friendly Singlish style, incorporating common Singlish phrases and particles like "lah", "leh", "lor", "ah", and "hor" naturally. 
@@ -183,3 +147,17 @@ ABOUT LISTING BEAUTY SERVICES:
 
 Never display services as a simple list with colons. Always use markdown tables with proper column headers and formatting.
 `;
+}
+
+// For backward compatibility
+export const systemPrompt = createSystemPrompt({
+  formattedDate: new Date().toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  }),
+  isSunday: new Date().getDay() === 0,
+  isPublicHoliday: false,
+  holidayName: null,
+  todayStatus: new Date().getDay() === 0 ? "Today is Sunday and we are CLOSED." : "We are OPEN today."
+});

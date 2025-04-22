@@ -3,7 +3,7 @@ import { ChatOpenAI } from '@langchain/openai';
 import { AgentExecutor, createToolCallingAgent } from 'langchain/agents';
 import { lookupUserTool, getAvailableSlotsTool, getServicesTool, bookAppointmentTool } from '@/tools';
 import { ChatPromptTemplate, MessagesPlaceholder } from '@langchain/core/prompts';
-import { systemPrompt } from '@/prompts/systemPrompt';
+import { createSystemPrompt } from '@/prompts/systemPrompt';
 import { ToolResult } from '@/types/tools';
 
 // Store executors and context in memory keyed by session ID
@@ -11,6 +11,99 @@ export const executors = new Map<string, AgentExecutor>();
 export const toolResults = new Map<string, ToolResult[]>();
 export const userContexts = new Map<string, any>();
 export const chatHistories = new Map<string, Array<{ type: string; content: string }>>();
+
+// Cache for public holidays
+let publicHolidaysCache: {
+  date: string;
+  holiday: string;
+}[] | null = null;
+let lastFetchTime = 0;
+const CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+
+// Function to fetch Singapore public holidays from data.gov.sg
+async function fetchPublicHolidays() {
+  // Check cache first
+  const now = Date.now();
+  if (publicHolidaysCache && (now - lastFetchTime < CACHE_DURATION)) {
+    console.log('📅 Using cached public holidays data');
+    return publicHolidaysCache;
+  }
+  
+  try {
+    console.log('📅 Fetching Singapore public holidays from data.gov.sg');
+    const response = await fetch('https://data.gov.sg/api/action/datastore_search?resource_id=d_3751791452397f1b1c80c451447e40b7');
+    
+    if (!response.ok) {
+      throw new Error(`Failed to fetch public holidays: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    if (!data.success || !data.result || !data.result.records) {
+      throw new Error('Invalid response format from data.gov.sg API');
+    }
+    
+    // Transform the data to a simpler format
+    const holidays = data.result.records.map((record: { date: string; holiday: string; }) => ({
+      date: record.date,
+      holiday: record.holiday
+    }));
+    
+    // Update cache
+    publicHolidaysCache = holidays;
+    lastFetchTime = now;
+    
+    console.log(`📅 Fetched ${holidays.length} public holidays`);
+    return holidays;
+  } catch (error) {
+    console.error('❌ Error fetching public holidays:', error);
+    // Return empty array if there's an error, so the app still works
+    return [];
+  }
+}
+
+// Server-side date determination function
+async function getServerDate() {
+  const currentDate = new Date();
+  
+  // Format the date
+  const formattedDate = currentDate.toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  });
+  
+  // Get day of week (0 = Sunday, 1 = Monday, etc.)
+  const dayOfWeek = currentDate.getDay();
+  const isSunday = dayOfWeek === 0;
+  
+  // Format today's date as YYYY-MM-DD for comparison with public holidays
+  const todayYMD = currentDate.toISOString().split('T')[0];
+  
+  // Fetch public holidays
+  const publicHolidays = await fetchPublicHolidays();
+  
+  // Check if today is a public holiday
+  const todayHoliday = publicHolidays.find((holiday: { date: string; holiday: string }) => holiday.date === todayYMD);
+  const isPublicHoliday = !!todayHoliday;
+  
+  // Create status message
+  let todayStatus = "We are OPEN today.";
+  if (isSunday) {
+    todayStatus = "Today is Sunday and we are CLOSED.";
+  } else if (isPublicHoliday) {
+    todayStatus = `Today is ${todayHoliday.holiday} (Public Holiday) and we are CLOSED.`;
+  }
+    
+  return {
+    formattedDate,
+    dayOfWeek,
+    isSunday,
+    isPublicHoliday,
+    holidayName: todayHoliday?.holiday || null,
+    todayStatus
+  };
+}
 
 async function getOrCreateExecutor(sessionId: string): Promise<AgentExecutor> {
   // Return existing executor if it exists
@@ -42,9 +135,16 @@ async function getOrCreateExecutor(sessionId: string): Promise<AgentExecutor> {
     apiKey,
   });
   
+  // Get the server date
+  const dateInfo = await getServerDate();
+  console.log(`📅 Server date info:`, dateInfo);
+  
+  // Create system prompt with server date
+  const systemPromptContent = createSystemPrompt(dateInfo);
+  
   // Create prompt
   const prompt = ChatPromptTemplate.fromMessages([
-    ["system", systemPrompt],
+    ["system", systemPromptContent],
     new MessagesPlaceholder("chat_history"),
     ["human", "{input}"],
     ["system", "{agent_scratchpad}"]
