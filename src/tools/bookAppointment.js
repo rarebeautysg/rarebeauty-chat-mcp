@@ -8,7 +8,8 @@ const BookAppointmentSchema = z.object({
   time: z.string(),
   name: z.string().describe("Name of the person booking"),
   mobile: z.string().describe("Mobile number of the person booking"),
-  resourceName: z.string().describe("resourceName of the person booking")
+  resourceName: z.string().describe("resourceName of the person booking"),
+  force: z.boolean().optional().describe("Whether to force book the appointment even if there are conflicts")
 });
 
 // Cache for public holidays
@@ -223,7 +224,7 @@ export class BookAppointmentTool extends StructuredTool {
         discount: 0,
         toBeInformed: true,
         deposit: 0,
-        force: false,
+        force: inputs.force === true, // Use the force parameter from inputs
         notes: `Booked via chat assistant for ${name}`
       };
       

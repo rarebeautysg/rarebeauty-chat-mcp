@@ -3,7 +3,7 @@ import { ChatOpenAI } from '@langchain/openai';
 import { AgentExecutor, createToolCallingAgent } from 'langchain/agents';
 import { lookupUserTool, getAvailableSlotsTool, getServicesTool, bookAppointmentTool } from '@/tools';
 import { ChatPromptTemplate, MessagesPlaceholder } from '@langchain/core/prompts';
-import { createSystemPrompt } from '@/prompts/systemPrompt';
+import { createSystemPrompt } from '@/prompts/systemPrompt-admin';
 import { ToolResult } from '@/types/tools';
 
 // Store executors and context in memory keyed by session ID
