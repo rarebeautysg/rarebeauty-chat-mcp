@@ -157,31 +157,117 @@ export default function Home() {
         console.error('Error checking server restart:', error);
       }
     };
-    
-    // Check for server restart first
-    checkServerRestart();
-    
-    // Then load stored session data if it exists
+  
+    // Check if a resourceNumber is provided in the URL
+    const checkResourceNumber = async () => {
+      const urlParams = new URLSearchParams(window.location.search);
+      const resourceNumber = urlParams.get('resourceNumber');
+      
+      if (resourceNumber) {
+        console.log('🔍 Found resourceNumber in URL:', resourceNumber);
+        // Format the complete resourceName with 'people/' prefix
+        const fullResourceName = `people/${resourceNumber}`;
+        
+        // Create a special initial message to load this customer
+        const initialMessage = `__LOAD_CUSTOMER__${fullResourceName}`;
+        
+        // Call the API to load this user
+        try {
+          setIsLoading(true);
+          const adminMode = checkAdminMode();
+          
+          const response = await fetch('/api/chat', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              message: initialMessage,
+              isAdmin: adminMode
+            })
+          });
+          
+          if (!response.ok) {
+            throw new Error(`API error: ${response.status}`);
+          }
+          
+          const data = await response.json();
+          
+          // Save the session ID
+          if (data.sessionId) {
+            setSessionId(data.sessionId);
+            localStorage.setItem('chatSessionId', data.sessionId);
+            console.log('📝 New session ID received and stored:', data.sessionId);
+          }
+          
+          // Add assistant welcome message
+          setMessages([{ 
+            role: 'assistant', 
+            content: data.response,
+            id: uuidv4()
+          }]);
+          
+          setIsLoading(false);
+          return true; // Signal that we've handled the customer loading
+        } catch (error) {
+          console.error('❌ Error loading customer from resourceNumber:', error);
+          setIsLoading(false);
+          return false;
+        }
+      } else {
+        // No resourceNumber, so fetch the standard welcome message
+        try {
+          setIsLoading(true);
+          const adminMode = checkAdminMode();
+          
+          const response = await fetch('/api/chat', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              message: "__WELCOME__",
+              isAdmin: adminMode
+            })
+          });
+          
+          if (!response.ok) {
+            throw new Error(`API error: ${response.status}`);
+          }
+          
+          const data = await response.json();
+          
+          // Save the session ID
+          if (data.sessionId) {
+            setSessionId(data.sessionId);
+            localStorage.setItem('chatSessionId', data.sessionId);
+            console.log('📝 New session ID received and stored:', data.sessionId);
+          }
+          
+          // Add assistant welcome message
+          setMessages([{ 
+            role: 'assistant', 
+            content: data.response,
+            id: uuidv4()
+          }]);
+          
+          setIsLoading(false);
+        } catch (error) {
+          console.error('❌ Error fetching welcome message:', error);
+          setIsLoading(false);
+        }
+      }
+      
+      return false; // No resourceNumber found
+    };
+
     const storedSessionId = localStorage.getItem('chatSessionId');
     if (storedSessionId) {
       setSessionId(storedSessionId);
-      console.log('📝 Retrieved stored session ID:', storedSessionId);
-      
-      // Load stored messages if they exist
-      const storedMessages = localStorage.getItem(`chatMessages-${storedSessionId}`);
-      if (storedMessages) {
-        try {
-          const parsedMessages = JSON.parse(storedMessages);
-          setMessages(parsedMessages);
-          console.log('📝 Loaded stored chat history:', parsedMessages.length, 'messages');
-        } catch (e) {
-          console.error('Failed to parse stored messages:', e);
-        }
-      }
-    } else {
-      // If no existing session, get a welcome message
-      fetchWelcomeMessage();
     }
+
+    checkServerRestart();
+    checkResourceNumber();
   }, []);
   
   // Fetch welcome message from the API

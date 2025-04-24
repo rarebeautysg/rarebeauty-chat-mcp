@@ -114,9 +114,30 @@ export async function GET(request: Request) {
     
     const { searchParams } = new URL(request.url);
     const phone = searchParams.get('phone');
+    const resourceName = searchParams.get('resourceName');
     
-    // If no phone provided, return all contacts
-    if (!phone) {
+    // Check if resource name is provided (this takes precedence over phone)
+    if (resourceName) {
+      console.log(`🔍 Looking up contact with resourceName: "${resourceName}"`);
+      const contact = contactsCache.find(c => c.resourceName === resourceName);
+      
+      if (contact) {
+        console.log(`✅ Found resourceName match: ${contact.name}`);
+        return NextResponse.json({
+          success: true,
+          contact
+        });
+      } else {
+        console.log(`❌ No contact found with resourceName: ${resourceName}`);
+        return NextResponse.json(
+          { success: false, error: 'Contact not found' },
+          { status: 404 }
+        );
+      }
+    }
+    
+    // If no parameters provided, return all contacts
+    if (!phone && !resourceName) {
       return NextResponse.json({
         success: true,
         contacts: contactsCache
@@ -124,7 +145,7 @@ export async function GET(request: Request) {
     }
     
     // Normalize the phone number for comparison
-    const normalizedInput = normalizePhone(phone);
+    const normalizedInput = normalizePhone(phone || '');
     const lastEightDigits = normalizedInput.slice(-8);
     
     console.log(`🔍 Looking up contact with normalized phone: "${normalizedInput}", last 8: "${lastEightDigits}"`);

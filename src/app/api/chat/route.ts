@@ -236,6 +236,62 @@ export async function POST(request: Request) {
         response: welcomeMessage,
         sessionId
       });
+    } else if (message.indexOf("__LOAD_CUSTOMER__") !== -1) {
+      console.log(`🔍 Loading customer for session ${sessionId}`);
+      const resourceName = message.replace("__LOAD_CUSTOMER__", "");
+      console.log(`🔍 Resource name: ${resourceName}`);
+      
+      // Load customer from database using the resource name
+      try {
+        // Call our contacts API to get customer data
+        const apiEndpoint = `/api/contacts?resourceName=${resourceName}`;
+        const contactsResponse = await fetch(new URL(apiEndpoint, process.env.VERCEL_URL || 'http://localhost:3002'));
+        
+        if (!contactsResponse.ok) {
+          throw new Error(`Failed to load customer: ${contactsResponse.status}`);
+        }
+        
+        const contactData = await contactsResponse.json();
+        
+        if (!contactData.success || !contactData.contact) {
+          throw new Error('Customer not found');
+        }
+        
+        const customer = contactData.contact;
+        
+        // Add customer to user context for this session
+        const updatedContext = {
+          resourceName: customer.resourceName,
+          name: customer.name,
+          mobile: customer.mobile,
+          updatedAt: new Date().toISOString()
+        };
+        
+        userContexts.set(sessionId, updatedContext);
+        console.log('✅ Stored customer context for session', sessionId, ':', updatedContext);
+        
+        // Return personalized welcome message
+        const welcomeMessage = isAdmin 
+          ? `Welcome, Admin. I've loaded the customer profile for ${customer.name} (${customer.mobile}). How can I assist you with this customer today?`
+          : `Hello ${customer.name}! Welcome back to Rare Beauty. How can I assist you today?`;
+        
+        return NextResponse.json({
+          response: welcomeMessage,
+          sessionId
+        });
+      } catch (error) {
+        console.error('❌ Error loading customer:', error);
+        
+        // Return a generic welcome message on error
+        const welcomeMessage = isAdmin 
+          ? "I couldn't find that customer. Can I have their mobile number so I can look them up?"
+          : "Hello there! How are you doing today? Can I have your mobile number so I can better help you?";
+        
+        return NextResponse.json({
+          response: welcomeMessage,
+          sessionId
+        });
+      }
     }
     
     console.log(`📨 Received message for session ${sessionId}: "${message.substring(0, 100)}${message.length > 100 ? '...' : ''}" (Admin: ${isAdmin})`);
