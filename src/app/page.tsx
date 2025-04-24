@@ -6,6 +6,13 @@ import { ChatInterface, Message } from '@/components/ChatInterface';
 import { Loading } from '@/components/Loading';
 import { MessageBubble } from '@/components/MessageBubble';
 import { ChatInput } from '@/components/ChatInput';
+import jwt from 'jsonwebtoken';
+
+// Interface for decoded JWT token
+interface DecodedToken {
+  role?: string;
+  [key: string]: any;
+}
 
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -14,7 +21,26 @@ export default function Home() {
   const [sessionId, setSessionId] = useState<string>('');
   const [isResetting, setIsResetting] = useState<boolean>(false);
   const [isClearingContext, setIsClearingContext] = useState<boolean>(false);
+  const [isAdmin, setIsAdmin] = useState<boolean>(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  
+  // Helper function to check if admin mode should be active
+  const checkAdminMode = (): boolean => {
+    // Check if we're on localhost
+    const isLocalhost = window.location.hostname.includes('localhost') || 
+                       window.location.hostname.includes('127.0.0.1');
+    
+    // If on localhost, use the query parameter
+    if (isLocalhost) {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get('admin') === 'true') {
+        return true;
+      }
+    }
+    
+    // Otherwise use the state from JWT verification
+    return isAdmin;
+  };
   
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -24,6 +50,74 @@ export default function Home() {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // Check if user is admin by verifying JWT token (only in production)
+  useEffect(() => {
+    const checkAdminPermission = async () => {
+      // Check for admin=true query parameter in localhost for testing
+      const isLocalhost = window.location.hostname.includes('localhost') || 
+                          window.location.hostname.includes('127.0.0.1');
+      
+      // If we're on localhost, check for admin query parameter
+      if (isLocalhost) {
+        const urlParams = new URLSearchParams(window.location.search);
+        const adminParam = urlParams.get('admin');
+        
+        if (adminParam === 'true') {
+          console.log('🔒 Admin mode enabled via query parameter');
+          setIsAdmin(true);
+          return;
+        }
+        
+        console.log('🔒 Admin check skipped in development environment');
+        return;
+      }
+
+      try {
+        // Get the token from cookies
+        const cookies = document.cookie.split(';').reduce((acc, cookie) => {
+          const [key, value] = cookie.trim().split('=');
+          acc[key] = value;
+          return acc;
+        }, {} as Record<string, string>);
+        
+        const token = cookies['token'];
+        
+        if (!token) {
+          console.log('🔒 No JWT token found in cookies');
+          return;
+        }
+        
+        // Get the JWT_SECRET from environment variables
+        // For client-side validation, we'll need to make an API call to verify
+        const response = await fetch('/api/verify-token', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ token })
+        });
+        
+        if (!response.ok) {
+          console.log('🔒 Token verification failed');
+          return;
+        }
+        
+        const { isValid, decoded } = await response.json();
+        
+        if (isValid && decoded && decoded.role === 'admin') {
+          console.log('🔒 Admin role verified');
+          setIsAdmin(true);
+        } else {
+          console.log('🔒 User does not have admin role:', decoded?.role);
+        }
+      } catch (error) {
+        console.error('❌ Error verifying JWT token:', error);
+      }
+    };
+    
+    checkAdminPermission();
+  }, []);
   
   // Retrieve stored session ID on component mount
   useEffect(() => {
@@ -94,6 +188,9 @@ export default function Home() {
   const fetchWelcomeMessage = async () => {
     setIsLoading(true);
     
+    // Get admin mode status
+    const adminMode = checkAdminMode();
+    
     try {
       // Call the backend API to get initial welcome message
       const response = await fetch('/api/chat', {
@@ -102,7 +199,8 @@ export default function Home() {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          message: "__WELCOME__"  // Special token to indicate welcome message request
+          message: "__WELCOME__",  // Special token to indicate welcome message request
+          isAdmin: adminMode  // Include admin role information
         })
       });
       
@@ -151,6 +249,9 @@ export default function Home() {
     setIsLoading(true);
     setErrorMessage('');
     
+    // Get admin mode status
+    const adminMode = checkAdminMode();
+    
     // Add user message to chat
     const userMessage: Message = { 
       role: 'user', 
@@ -168,7 +269,8 @@ export default function Home() {
           ...(sessionId ? { 'x-session-id': sessionId } : {})
         },
         body: JSON.stringify({
-          message: content
+          message: content,
+          isAdmin: adminMode // Include admin role information
         })
       });
       
@@ -281,10 +383,10 @@ export default function Home() {
       <div className="fixed top-0 left-0 right-0 z-30 px-2 pt-10 pb-2 bg-gradient-to-r from-pink-500 to-pink-600 border-b border-pink-700 flex justify-between items-center">
         <h1 className="text-lg font-bold text-white flex items-center">
           <img src="/rb-logo.png" alt="Rare Beauty Logo" className="w-6 h-6 mr-2" />
-          Rare Beauty Assistant
+          {isAdmin ? 'Rare Beauty Admin' : 'Rare Beauty Assistant'}
         </h1>
         <div className="flex space-x-2">
-          {sessionId && (
+          {isAdmin && sessionId && (
             <button 
               onClick={handleClearContext}
               disabled={isClearingContext || isResetting}
@@ -302,6 +404,13 @@ export default function Home() {
           </button>
         </div>
       </div>
+      
+      {/* Admin badge - only shown if user is admin */}
+      {isAdmin && (
+        <div className="fixed top-[90px] right-2 z-40 bg-yellow-100 text-yellow-800 px-2 py-1 text-xs rounded-md border border-yellow-300 shadow-sm">
+          Admin Mode
+        </div>
+      )}
       
       {/* Chat content area with fixed positioning */}
       <div className="fixed top-[70px] bottom-[80px] left-0 right-0 z-10 bg-white overflow-y-auto pt-2">
@@ -329,7 +438,7 @@ export default function Home() {
         <ChatInput
           onSubmit={handleSendMessage}
           isLoading={isLoading}
-          placeholder="Type here..."
+          placeholder={isAdmin ? "Enter admin command..." : "Type here..."}
         />
         
         {errorMessage && (

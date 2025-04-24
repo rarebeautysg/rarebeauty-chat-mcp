@@ -1,13 +1,15 @@
 import { NextResponse } from 'next/server';
 import { ChatOpenAI } from '@langchain/openai';
 import { AgentExecutor, createToolCallingAgent } from 'langchain/agents';
-import { lookupUserTool, getAvailableSlotsTool, getServicesTool, bookAppointmentTool } from '@/tools';
+import { lookupUserTool, getAvailableSlotsTool, getServicesTool, bookAppointmentTool, createContactTool } from '@/tools';
 import { ChatPromptTemplate, MessagesPlaceholder } from '@langchain/core/prompts';
-import { createSystemPrompt } from '@/prompts/systemPrompt-admin';
+import { createSystemPrompt as createAdminSystemPrompt } from '@/prompts/systemPrompt-admin';
+import { createSystemPrompt as createCustomerSystemPrompt } from '@/prompts/systemPrompt-customer';
 import { ToolResult } from '@/types/tools';
 
 // Store executors and context in memory keyed by session ID
 export const executors = new Map<string, AgentExecutor>();
+export const adminExecutors = new Map<string, AgentExecutor>(); // Separate store for admin executors
 export const toolResults = new Map<string, ToolResult[]>();
 export const userContexts = new Map<string, any>();
 export const chatHistories = new Map<string, Array<{ type: string; content: string }>>();
@@ -105,21 +107,45 @@ async function getServerDate() {
   };
 }
 
-async function getOrCreateExecutor(sessionId: string): Promise<AgentExecutor> {
+// Add a utility function to escape JSON strings in tool outputs
+function escapeJsonForTemplate(jsonStr: string): string {
+  if (!jsonStr || typeof jsonStr !== 'string') return jsonStr;
+
+  // Check if it's a JSON string
+  try {
+    const parsedJson = JSON.parse(jsonStr);
+    // If it parsed successfully, return a sanitized version
+    return `Tool result: ${JSON.stringify(parsedJson).replace(/[{}"]/g, '').replace(/:/g, ' = ').replace(/,/g, ', ')}`;
+  } catch (e) {
+    // Not JSON, return as is
+    return jsonStr;
+  }
+}
+
+async function getOrCreateExecutor(sessionId: string, isAdmin: boolean = false): Promise<AgentExecutor> {
+  // Use appropriate executor map based on role
+  const executorMap = isAdmin ? adminExecutors : executors;
+  
   // Return existing executor if it exists
-  if (executors.has(sessionId)) {
-    return executors.get(sessionId)!;
+  if (executorMap.has(sessionId)) {
+    return executorMap.get(sessionId)!;
   }
   
-  console.log(`🔧 Creating new executor for session ${sessionId}`);
+  console.log(`🔧 Creating new ${isAdmin ? 'admin' : 'customer'} executor for session ${sessionId}`);
   
   // Set up tools - use imported instances
-  const tools = [
+  const tools: any[] = [
     lookupUserTool,
     getServicesTool,
     getAvailableSlotsTool,
     bookAppointmentTool,
   ];
+  
+  // Add admin-only tools if admin mode is enabled
+  if (isAdmin) {
+    tools.push(createContactTool);
+    console.log('🔧 Added admin-only tools');
+  }
   
   console.log(`📋 Initialized tools:`, tools.map(t => t.name));
   
@@ -139,8 +165,12 @@ async function getOrCreateExecutor(sessionId: string): Promise<AgentExecutor> {
   const dateInfo = await getServerDate();
   console.log(`📅 Server date info:`, dateInfo);
   
-  // Create system prompt with server date
-  const systemPromptContent = createSystemPrompt(dateInfo);
+  // Create system prompt with server date based on role
+  const systemPromptContent = isAdmin 
+    ? createAdminSystemPrompt(dateInfo)
+    : createCustomerSystemPrompt(dateInfo);
+  
+  console.log(`📝 Using ${isAdmin ? 'admin' : 'customer'} system prompt`);
   
   // Create prompt
   const prompt = ChatPromptTemplate.fromMessages([
@@ -164,16 +194,18 @@ async function getOrCreateExecutor(sessionId: string): Promise<AgentExecutor> {
     throw new Error(`Failed to create agent: ${error instanceof Error ? error.message : String(error)}`);
   }
   
-  // Create executor
+  // Create executor with error handling options
   const executor = new AgentExecutor({
     agent,
     tools,
     returnIntermediateSteps: true,
+    handleParsingErrors: true,
+    maxIterations: 5,
     // verbose: process.env.NODE_ENV !== 'production', // Enable verbose mode in non-production
   });
   
-  // Store executor for future use
-  executors.set(sessionId, executor);
+  // Store executor for future use in appropriate map
+  executorMap.set(sessionId, executor);
   
   return executor;
 }
@@ -184,7 +216,7 @@ export async function POST(request: Request) {
     const sessionId = request.headers.get('x-session-id') || crypto.randomUUID();
     
     // Parse request
-    const { message } = await request.json();
+    const { message, isAdmin = false } = await request.json();
     
     if (!message || typeof message !== 'string') {
       return NextResponse.json(
@@ -196,19 +228,23 @@ export async function POST(request: Request) {
     // Handle special welcome message request
     if (message === "__WELCOME__") {
       console.log(`🌟 Sending welcome message for new session ${sessionId}`);
+      const welcomeMessage = isAdmin 
+        ? "Welcome, Admin. Can I have the customer's mobile number so I can better help you?"
+        : "Hello there! How are you doing today? Can I have your mobile number so I can better help you?";
+      
       return NextResponse.json({
-        response: "Hello there! How are you doing today? Can I have your mobile number so I can better help you?",
+        response: welcomeMessage,
         sessionId
       });
     }
     
-    console.log(`📨 Received message for session ${sessionId}: "${message.substring(0, 100)}${message.length > 100 ? '...' : ''}"`);
+    console.log(`📨 Received message for session ${sessionId}: "${message.substring(0, 100)}${message.length > 100 ? '...' : ''}" (Admin: ${isAdmin})`);
     
     // Get or create executor
     let executor;
     let toolsAvailable = [];
     try {
-      executor = await getOrCreateExecutor(sessionId);
+      executor = await getOrCreateExecutor(sessionId, isAdmin);
       // Capture tools for error reporting
       toolsAvailable = executor.tools.map(t => t.name);
     } catch (executorError) {
@@ -240,6 +276,9 @@ export async function POST(request: Request) {
     if (userContext?.resourceName) {
       inputToUse = `${message} (User context: ResourceName=${userContext.resourceName}, Name=${userContext.name}, Mobile=${userContext.mobile})`;
       console.log('📝 Enhanced input with user context for session', sessionId);
+      console.log('👤 User context applied:', JSON.stringify(userContext));
+    } else {
+      console.log('👤 No user context available for session', sessionId);
     }
     
     console.log(`🤖 Invoking executor for session ${sessionId}`);
@@ -270,16 +309,69 @@ export async function POST(request: Request) {
             console.log(`🔄 Processing tool result manually - Tool: ${step.action.tool}`);
             try {
               let observation = step.observation;
+              
+              // Sanitize tool outputs before they get processed as template variables
+              if (typeof observation === 'string') {
+                // Try to format JSON observations to prevent template variable issues
+                step.observation = escapeJsonForTemplate(observation);
+                
+                // Special handling for our custom formatted responses
+                if (observation.startsWith('CONTACT_CREATED|')) {
+                  // Parse the pipe-delimited format
+                  const parts = observation.split('|');
+                  const contactData: Record<string, string> = {};
+                  
+                  // Extract data from the parts
+                  for (let i = 1; i < parts.length; i++) {
+                    const [key, value] = parts[i].split(':');
+                    if (key && value) {
+                      contactData[key] = value;
+                    }
+                  }
+                  
+                  console.log('📝 Parsed contact data from custom format:', contactData);
+                  
+                  // Format a clean observation string
+                  step.observation = `Created contact successfully. Name: ${contactData['Name'] || 'Unknown'}, Mobile: ${contactData['Mobile'] || 'Unknown'}, ResourceName: ${contactData['ResourceName'] || 'Unknown'}`;
+                  
+                  // Save contact data in memory for future tool calls
+                  if (contactData['ResourceName']) {
+                    const updatedContext = {
+                      resourceName: contactData['ResourceName'],
+                      name: contactData['Name'] || 'Unknown',
+                      mobile: contactData['Mobile'] || 'Unknown',
+                      updatedAt: new Date().toISOString()
+                    };
+                    
+                    userContexts.set(sessionId, updatedContext);
+                    console.log('🔑 Stored contact context from custom format for session', sessionId, ':', updatedContext);
+                  }
+                }
+              }
+              
               // Extract tool results
               let parsedObservation;
               if (typeof observation === 'string') {
                 try {
                   parsedObservation = JSON.parse(observation);
+                  
+                  // Add more descriptive text that won't be processed as template variables
+                  if (step.action.tool === 'createContact' && parsedObservation.resourceName) {
+                    // Replace the JSON observation with a sanitized string
+                    step.observation = `Created contact successfully. Name: ${parsedObservation.name}, Mobile: ${parsedObservation.mobile}, ResourceName: ${parsedObservation.resourceName}`;
+                  }
+                  
+                  if (step.action.tool === 'lookupUser' && parsedObservation.resourceName) {
+                    // Replace the JSON observation with a sanitized string
+                    step.observation = `Found user. Name: ${parsedObservation.name}, Mobile: ${parsedObservation.mobile}, ResourceName: ${parsedObservation.resourceName}`;
+                  }
                 } catch (e) {
                   parsedObservation = { rawOutput: observation };
                 }
               } else {
                 parsedObservation = observation;
+                // Sanitize non-string observations too
+                step.observation = `Tool result: ${JSON.stringify(observation).replace(/[{}"]/g, '').replace(/:/g, ' = ').replace(/,/g, ', ')}`;
               }
               
               // Store all tool results
@@ -304,6 +396,23 @@ export async function POST(request: Request) {
                 userContexts.set(sessionId, updatedContext);
                 
                 console.log('🔑 Manually stored user context for session', sessionId, ':', updatedContext);
+              }
+              
+              // Process user data from createContact tool
+              if (step.action.tool === 'createContact' && parsedObservation && parsedObservation.success && parsedObservation.resourceName) {
+                console.log('👤 Manually found created contact data:', parsedObservation);
+                
+                // Save contact data in memory for future tool calls
+                const updatedContext = {
+                  resourceName: parsedObservation.resourceName,
+                  name: parsedObservation.name,
+                  mobile: parsedObservation.mobile,
+                  updatedAt: new Date().toISOString()
+                };
+                
+                userContexts.set(sessionId, updatedContext);
+                
+                console.log('🔑 Manually stored created contact context for session', sessionId, ':', updatedContext);
               }
             } catch (e) {
               console.error('❌ Error manually processing step:', e);

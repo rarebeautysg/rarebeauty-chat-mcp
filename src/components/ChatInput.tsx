@@ -55,7 +55,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       <form onSubmit={handleSubmit} className="relative">
         <textarea
           ref={textareaRef}
-          className="w-full h-10 sm:h-14 p-2 pr-14 bg-white border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-pink-500 focus:border-pink-500 resize-none"
+          className="w-full h-10 sm:h-14 p-2 pr-14 bg-white text-black border border-gray-300 rounded-lg shadow-sm 
+             focus:outline-none focus:ring-2 focus:ring-pink-500 focus:border-pink-500 resize-none
+             dark:bg-white dark:text-black dark:placeholder-gray-500"
           placeholder={placeholder || "Type a message..."}
           value={inputValue}
           onChange={(e) => setInputValue(e.target.value)}

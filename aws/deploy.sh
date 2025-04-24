@@ -43,4 +43,26 @@ NEW_TASK_DEFINITION_ARN=$(aws ecs register-task-definition --region $AWS_REGION 
 echo "Updating the service to use the new task definition..."
 aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE --task-definition $NEW_TASK_DEFINITION_ARN --region $AWS_REGION
 
+# Get the list of running tasks for the service
+echo "Finding running tasks..."
+RUNNING_TASKS=$(aws ecs list-tasks --cluster $ECS_CLUSTER --service-name $ECS_SERVICE --region $AWS_REGION | jq -r '.taskArns[]')
+
+# Stop each running task to force new deployment
+if [ -n "$RUNNING_TASKS" ]; then
+  echo "Stopping running tasks to force new deployment..."
+  for TASK_ARN in $RUNNING_TASKS; do
+    echo "Stopping task: $TASK_ARN"
+    aws ecs stop-task --cluster $ECS_CLUSTER --task $TASK_ARN --region $AWS_REGION
+    echo "Task $TASK_ARN stopped."
+  done
+else
+  echo "No running tasks found."
+fi
+
+echo "Waiting for new tasks to start..."
+sleep 10
+
+echo "Checking service deployment status..."
+aws ecs describe-services --cluster $ECS_CLUSTER --services $ECS_SERVICE --region $AWS_REGION | jq '.services[0].deployments'
+
 echo "Deployment completed successfully!" 
