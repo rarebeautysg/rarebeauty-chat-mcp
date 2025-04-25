@@ -36,9 +36,10 @@ export default function Home() {
       if (urlParams.get('admin') === 'true') {
         return true;
       }
+      return false; // Explicitly return false for localhost without admin param
     }
     
-    // Otherwise use the state from JWT verification
+    // In production, use the state from JWT verification
     return isAdmin;
   };
   
