@@ -1,12 +1,11 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { v4 as uuidv4 } from 'uuid';
 import { ChatInterface, Message } from '@/components/ChatInterface';
 import { Loading } from '@/components/Loading';
 import { MessageBubble } from '@/components/MessageBubble';
 import { ChatInput } from '@/components/ChatInput';
-import jwt from 'jsonwebtoken';
+import { useSocketChat } from '@/hooks/useSocketChat';
 
 // Interface for decoded JWT token
 interface DecodedToken {
@@ -15,17 +14,19 @@ interface DecodedToken {
 }
 
 export default function Home() {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [errorMessage, setErrorMessage] = useState<string>('');
-  const [sessionId, setSessionId] = useState<string>('');
   const [isResetting, setIsResetting] = useState<boolean>(false);
   const [isClearingContext, setIsClearingContext] = useState<boolean>(false);
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
+  const [errorMessage, setErrorMessage] = useState<string>('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   
   // Helper function to check if admin mode should be active
   const checkAdminMode = (): boolean => {
+    // Check if we're in a browser environment
+    if (typeof window === 'undefined') {
+      return false; // Default to false on server-side rendering
+    }
+    
     // Check if we're on localhost
     const isLocalhost = window.location.hostname.includes('localhost') || 
                        window.location.hostname.includes('127.0.0.1');
@@ -43,6 +44,17 @@ export default function Home() {
     return isAdmin;
   };
   
+  // Get WebSocket chat functionality from our custom hook
+  const {
+    messages,
+    sendMessage,
+    isLoading,
+    isConnected,
+    loadCustomer,
+    clearContext,
+    resetChat
+  } = useSocketChat(checkAdminMode());
+  
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
@@ -51,7 +63,7 @@ export default function Home() {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
-
+  
   // Check if user is admin by verifying JWT token (only in production)
   useEffect(() => {
     const checkAdminPermission = async () => {
@@ -120,215 +132,52 @@ export default function Home() {
     checkAdminPermission();
   }, []);
   
-  // Retrieve stored session ID on component mount
+  // Check for resource number in URL on load
   useEffect(() => {
-    // Check if the server has restarted by comparing timestamps
-    const checkServerRestart = async () => {
-      try {
-        // Fetch the current page to get the server timestamp header
-        const response = await fetch('/', { 
-          method: 'HEAD',
-          cache: 'no-store' // Prevent caching to ensure we get fresh headers
-        });
-        
-        // Get the server start timestamp from response headers
-        const serverStartTime = response.headers.get('X-Server-Start-Time');
-        const storedStartTime = localStorage.getItem('serverStartTime');
-        
-        // If server has restarted (timestamp changed or no stored timestamp)
-        if (!storedStartTime || serverStartTime !== storedStartTime) {
-          console.log('🔄 Server restart detected, clearing localStorage');
-          
-          // Clear all chat related data
-          Object.keys(localStorage).forEach(key => {
-            if (key.startsWith('chat') || key === 'sessionId') {
-              localStorage.removeItem(key);
-            }
-          });
-          
-          // Store the new timestamp
-          localStorage.setItem('serverStartTime', serverStartTime || '');
-          
-          // Reset state
-          setSessionId('');
-          setMessages([]);
-          return;
-        }
-      } catch (error) {
-        console.error('Error checking server restart:', error);
-      }
-    };
-  
-    // Check if a resourceNumber is provided in the URL
-    const checkResourceNumber = async () => {
+    // Skip on server-side rendering
+    if (typeof window === 'undefined') return;
+    
+    const checkResourceNumber = () => {
       const urlParams = new URLSearchParams(window.location.search);
       const resourceNumber = urlParams.get('resourceNumber');
-
+      
       console.log('🔍 Resource number:', resourceNumber);
       
-      if (resourceNumber) {
+      if (resourceNumber && isConnected) {
         console.log('🔍 Found resourceNumber in URL:', resourceNumber);
-        return await loadCustomerProfile(resourceNumber);
-      } else {
-        // No resourceNumber, so fetch the standard welcome message
-        await fetchWelcomeMessage();
-        return false;
+        // Format the complete resourceName with 'people/' prefix
+        // Check if resourceNumber already has the 'c' prefix
+        const formattedNumber = resourceNumber.startsWith('c') ? resourceNumber : `c${resourceNumber}`;
+        const fullResourceName = `people/${formattedNumber}`;
+        
+        console.log('🔍 Formatted resource name:', fullResourceName);
+        
+        // Load customer profile via WebSocket
+        loadCustomer(fullResourceName);
       }
     };
-
-    const storedSessionId = localStorage.getItem('chatSessionId');
-    if (storedSessionId) {
-      setSessionId(storedSessionId);
-    }
-
-    checkServerRestart();
-    checkResourceNumber();
-  }, []);
-  
-  // Fetch welcome message from the API
-  const fetchWelcomeMessage = async () => {
-    setIsLoading(true);
     
-    // Get admin mode status
-    const adminMode = checkAdminMode();
-    
-    try {
-      // Call the backend API to get initial welcome message
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          message: "__WELCOME__",  // Special token to indicate welcome message request
-          isAdmin: adminMode  // Include admin role information
-        })
-      });
-      
-      if (!response.ok) {
-        throw new Error(`API error: ${response.status}`);
-      }
-      
-      const data = await response.json();
-      
-      // Save the session ID
-      if (data.sessionId) {
-        setSessionId(data.sessionId);
-        localStorage.setItem('chatSessionId', data.sessionId);
-        console.log('📝 New session ID received and stored:', data.sessionId);
-      }
-      
-      // Add assistant welcome message
-      setMessages([{ 
-        role: 'assistant', 
-        content: data.response,
-        id: uuidv4()
-      }]);
-    } catch (error) {
-      console.error('❌ Error fetching welcome message:', error);
-      // Add default welcome message in case of error
-      setMessages([{ 
-        role: 'assistant', 
-        content: 'Hello there! How are you doing today? Can I have your mobile number so I can better help you?',
-        id: uuidv4()
-      }]);
-    } finally {
-      setIsLoading(false);
+    if (isConnected) {
+      checkResourceNumber();
     }
-  };
-  
-  // Save messages to localStorage whenever they change
-  useEffect(() => {
-    if (sessionId && messages.length > 0) {
-      localStorage.setItem(`chatMessages-${sessionId}`, JSON.stringify(messages));
-    }
-  }, [messages, sessionId]);
+  }, [isConnected, loadCustomer]);
   
   const handleSendMessage = async (content: string) => {
     if (!content.trim()) return;
-
-    setIsLoading(true);
     setErrorMessage('');
-    
-    // Get admin mode status
-    const adminMode = checkAdminMode();
-    
-    // Add user message to chat
-    const userMessage: Message = { 
-      role: 'user', 
-      content, 
-      id: uuidv4() 
-    };
-    setMessages(prev => [...prev, userMessage]);
-    
-    try {
-      // Call the backend API with the session ID if available
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(sessionId ? { 'x-session-id': sessionId } : {})
-        },
-        body: JSON.stringify({
-          message: content,
-          isAdmin: adminMode // Include admin role information
-        })
-      });
-      
-      if (!response.ok) {
-        throw new Error(`API error: ${response.status}`);
-      }
-      
-      const data = await response.json();
-      
-      // Save the session ID if we got one back
-      if (data.sessionId && !sessionId) {
-        setSessionId(data.sessionId);
-        localStorage.setItem('chatSessionId', data.sessionId);
-        console.log('📝 New session ID received and stored:', data.sessionId);
-      }
-      
-      // Add assistant response
-      setMessages(prev => [...prev, { 
-        role: 'assistant', 
-        content: data.response,
-        id: uuidv4()
-      }]);
-    } catch (error) {
-      console.error('❌ Error in chat execution:', error);
-      setErrorMessage('Something went wrong. Please try again.');
-      
-      // Add error message to chat
-      setMessages(prev => [...prev, { 
-        role: 'assistant', 
-        content: 'Sorry, I encountered an error processing your request. Please try again.',
-        id: uuidv4()
-      }]);
-    } finally {
-      setIsLoading(false);
-    }
+    sendMessage(content);
   };
   
   const handleResetChat = () => {
     if (window.confirm('Are you sure you want to reset the chat? This will clear all messages and start a new session.')) {
       setIsResetting(true);
+      resetChat();
       
-      // Clear local storage
-      if (sessionId) {
-        localStorage.removeItem(`chatMessages-${sessionId}`);
-        localStorage.removeItem('chatSessionId');
-      }
-      
-      // Reset state
-      setMessages([]);
-      setSessionId('');
-      setErrorMessage('');
-      
-      // Preserve URL parameters for the new session
+      // After a brief delay, show new chat interface
       setTimeout(() => {
         setIsResetting(false);
         
-        // Get URL parameters
+        // If there's a resource number, reload that customer profile
         const urlParams = new URLSearchParams(window.location.search);
         const resourceNumber = urlParams.get('resourceNumber');
         
@@ -338,161 +187,27 @@ export default function Home() {
           const formattedNumber = resourceNumber.startsWith('c') ? resourceNumber : `c${resourceNumber}`;
           const fullResourceName = `people/${formattedNumber}`;
           
-          // Create a special initial message to load this customer
-          const initialMessage = `__LOAD_CUSTOMER__${fullResourceName}`;
-          
-          // Call the API to load this user
-          setIsLoading(true);
-          const adminMode = checkAdminMode();
-          
-          fetch('/api/chat', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              message: initialMessage,
-              isAdmin: adminMode
-            })
-          })
-          .then(response => {
-            if (!response.ok) {
-              throw new Error(`API error: ${response.status}`);
-            }
-            return response.json();
-          })
-          .then(data => {
-            // Save the session ID
-            if (data.sessionId) {
-              setSessionId(data.sessionId);
-              localStorage.setItem('chatSessionId', data.sessionId);
-              console.log('📝 New session ID received and stored:', data.sessionId);
-            }
-            
-            // Add assistant welcome message
-            setMessages([{ 
-              role: 'assistant', 
-              content: data.response,
-              id: uuidv4()
-            }]);
-          })
-          .catch(error => {
-            console.error('❌ Error loading customer after reset:', error);
-            fetchWelcomeMessage(); // Fallback to welcome message
-          })
-          .finally(() => {
-            setIsLoading(false);
-          });
-        } else {
-          // No resourceNumber, so fetch the standard welcome message
-          fetchWelcomeMessage();
+          // Load customer profile via WebSocket
+          loadCustomer(fullResourceName);
         }
       }, 1000);
     }
   };
 
   const handleClearContext = async () => {
-    if (!sessionId) {
-      alert('No active session to clear.');
-      return;
-    }
-    
-    if (window.confirm(`Are you sure you want to clear the server-side context for session ${sessionId}? This will remove any stored user information.`)) {
+    if (window.confirm(`Are you sure you want to clear the server-side context? This will remove any stored user information.`)) {
       setIsClearingContext(true);
       
       try {
-        // Call the admin API to clear the context for this session
-        const response = await fetch(`/api/admin/context?sessionId=${sessionId}`, {
-          method: 'DELETE',
-          headers: {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json'
-          }
-        });
-        
-        // Check if response is JSON
-        const contentType = response.headers.get('content-type');
-        if (!contentType || !contentType.includes('application/json')) {
-          console.error('❌ Non-JSON response when clearing context:', contentType);
-          const text = await response.text();
-          console.error('❌ Response text:', text.substring(0, 200));
-          throw new Error('Received non-JSON response from server');
-        }
-        
-        const data = await response.json();
-        
-        if (response.ok && data.success) {
-          console.log('✅ Successfully cleared server context:', data);
-          alert('Server context cleared successfully.');
-        } else {
-          console.error('❌ Failed to clear context:', data);
-          alert(`Failed to clear context: ${data.error || 'Unknown error'}`);
-        }
+        // Clear context via WebSocket
+        clearContext();
+        alert('Server context cleared successfully.');
       } catch (error) {
         console.error('❌ Error clearing context:', error);
         alert(`Error clearing context: ${error instanceof Error ? error.message : 'Unknown error'}`);
       } finally {
         setIsClearingContext(false);
       }
-    }
-  };
-
-  // Function to load a customer profile from a resource number
-  const loadCustomerProfile = async (resourceNumber: string) => {
-    console.log('🔍 Loading customer profile for resourceNumber:', resourceNumber);
-    
-    // Format the complete resourceName with 'people/' prefix
-    // Check if resourceNumber already has the 'c' prefix
-    const formattedNumber = resourceNumber.startsWith('c') ? resourceNumber : `c${resourceNumber}`;
-    const fullResourceName = `people/${formattedNumber}`;
-    
-    console.log('🔍 Formatted resource name:', fullResourceName);
-    
-    // Create a special initial message to load this customer
-    const initialMessage = `__LOAD_CUSTOMER__${fullResourceName}`;
-    
-    // Call the API to load this user
-    try {
-      setIsLoading(true);
-      const adminMode = checkAdminMode();
-      
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          message: initialMessage,
-          isAdmin: adminMode
-        })
-      });
-      
-      if (!response.ok) {
-        throw new Error(`API error: ${response.status}`);
-      }
-      
-      const data = await response.json();
-      
-      // Save the session ID
-      if (data.sessionId) {
-        setSessionId(data.sessionId);
-        localStorage.setItem('chatSessionId', data.sessionId);
-        console.log('📝 New session ID received and stored:', data.sessionId);
-      }
-      
-      // Add assistant welcome message
-      setMessages([{ 
-        role: 'assistant', 
-        content: data.response,
-        id: uuidv4()
-      }]);
-      
-      setIsLoading(false);
-      return true; // Signal that we've handled the customer loading
-    } catch (error) {
-      console.error('❌ Error loading customer from resourceNumber:', error);
-      setIsLoading(false);
-      return false;
     }
   };
 
@@ -503,21 +218,22 @@ export default function Home() {
         <h1 className="text-lg font-bold text-white flex items-center">
           <img src="/rb-logo.png" alt="Rare Beauty Logo" className="w-6 h-6 mr-2" />
           {isAdmin ? 'Rare Beauty Admin' : 'Rare Beauty Assistant'}
+          {!isConnected && <span className="ml-2 text-xs bg-red-700 px-1 py-0.5 rounded">Offline</span>}
         </h1>
         <div className="flex space-x-2">
-          {isAdmin && sessionId && (
+          {isAdmin && (
             <button 
               onClick={handleClearContext}
-              disabled={isClearingContext || isResetting}
-              className="px-2 py-1 text-xs bg-pink-700 hover:bg-pink-800 text-white rounded-md transition-colors shadow-sm"
+              disabled={isClearingContext || isResetting || !isConnected}
+              className="px-2 py-1 text-xs bg-pink-700 hover:bg-pink-800 text-white rounded-md transition-colors shadow-sm disabled:opacity-50"
             >
               {isClearingContext ? <Loading text="Clearing" size="sm" /> : 'Clear'}
             </button>
           )}
           <button 
             onClick={handleResetChat}
-            disabled={isResetting}
-            className="px-2 py-1 text-xs bg-pink-800 hover:bg-pink-900 text-white rounded-md transition-colors shadow-sm"
+            disabled={isResetting || !isConnected}
+            className="px-2 py-1 text-xs bg-pink-800 hover:bg-pink-900 text-white rounded-md transition-colors shadow-sm disabled:opacity-50"
           >
             {isResetting ? <Loading text="Resetting" size="sm" /> : 'New'}
           </button>
@@ -536,6 +252,16 @@ export default function Home() {
         {isResetting ? (
           <div className="h-full flex items-center justify-center">
             <Loading text="Starting new chat..." size="lg" />
+          </div>
+        ) : !isConnected ? (
+          <div className="h-full flex items-center justify-center flex-col">
+            <div className="text-red-500 mb-2">Not connected to server</div>
+            <button 
+              onClick={() => window.location.reload()}
+              className="px-3 py-1 bg-pink-600 text-white rounded-md"
+            >
+              Reconnect
+            </button>
           </div>
         ) : (
           <div className="h-full pb-4">
@@ -557,6 +283,7 @@ export default function Home() {
         <ChatInput
           onSubmit={handleSendMessage}
           isLoading={isLoading}
+          disabled={!isConnected}
           placeholder={isAdmin ? "Enter admin command..." : "Type here..."}
         />
         

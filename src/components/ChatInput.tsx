@@ -4,12 +4,14 @@ interface ChatInputProps {
   onSubmit: (message: string) => void;
   isLoading: boolean;
   placeholder?: string;
+  disabled?: boolean;
 }
 
 export const ChatInput: React.FC<ChatInputProps> = ({
   onSubmit,
   isLoading,
-  placeholder = 'Type your message...'
+  placeholder = 'Type your message...',
+  disabled = false
 }) => {
   const [inputValue, setInputValue] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -30,7 +32,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
-    if (inputValue.trim() && !isLoading) {
+    if (inputValue.trim() && !isLoading && !disabled) {
       onSubmit(inputValue);
       setInputValue('');
       
@@ -44,7 +46,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey && !disabled) {
       e.preventDefault();
       handleSubmit(e);
     }
@@ -55,20 +57,22 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       <form onSubmit={handleSubmit} className="relative">
         <textarea
           ref={textareaRef}
-          className="w-full h-10 sm:h-14 p-2 pr-14 bg-white text-black border border-gray-300 rounded-lg shadow-sm 
+          className={`w-full h-10 sm:h-14 p-2 pr-14 bg-white text-black border border-gray-300 rounded-lg shadow-sm 
              focus:outline-none focus:ring-2 focus:ring-pink-500 focus:border-pink-500 resize-none
-             dark:bg-white dark:text-black dark:placeholder-gray-500"
+             dark:bg-white dark:text-black dark:placeholder-gray-500
+             ${disabled ? 'bg-gray-100 cursor-not-allowed opacity-75' : ''}`}
           placeholder={placeholder || "Type a message..."}
           value={inputValue}
           onChange={(e) => setInputValue(e.target.value)}
           onKeyDown={handleKeyDown}
-          readOnly={isLoading}
+          readOnly={isLoading || disabled}
+          disabled={disabled}
         ></textarea>
         <button
           type="submit"
-          disabled={isLoading || !inputValue.trim()}
+          disabled={isLoading || !inputValue.trim() || disabled}
           className={`absolute right-3 bottom-3 p-2 rounded-lg ${
-            isLoading || !inputValue.trim() 
+            isLoading || !inputValue.trim() || disabled
               ? 'bg-gray-200 text-gray-500 cursor-not-allowed' 
               : 'bg-pink-500 text-white hover:bg-pink-600'
           } transition-colors duration-200 shadow-sm`}

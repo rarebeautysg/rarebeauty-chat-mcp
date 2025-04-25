@@ -122,7 +122,7 @@ function escapeJsonForTemplate(jsonStr: string): string {
   }
 }
 
-async function getOrCreateExecutor(sessionId: string, isAdmin: boolean = false): Promise<AgentExecutor> {
+export async function getOrCreateExecutor(sessionId: string, isAdmin: boolean = false): Promise<AgentExecutor> {
   // Use appropriate executor map based on role
   const executorMap = isAdmin ? adminExecutors : executors;
   
