@@ -163,103 +163,17 @@ export default function Home() {
     const checkResourceNumber = async () => {
       const urlParams = new URLSearchParams(window.location.search);
       const resourceNumber = urlParams.get('resourceNumber');
+
+      console.log('🔍 Resource number:', resourceNumber);
       
       if (resourceNumber) {
         console.log('🔍 Found resourceNumber in URL:', resourceNumber);
-        // Format the complete resourceName with 'people/' prefix
-        const fullResourceName = `people/${resourceNumber}`;
-        
-        // Create a special initial message to load this customer
-        const initialMessage = `__LOAD_CUSTOMER__${fullResourceName}`;
-        
-        // Call the API to load this user
-        try {
-          setIsLoading(true);
-          const adminMode = checkAdminMode();
-          
-          const response = await fetch('/api/chat', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              message: initialMessage,
-              isAdmin: adminMode
-            })
-          });
-          
-          if (!response.ok) {
-            throw new Error(`API error: ${response.status}`);
-          }
-          
-          const data = await response.json();
-          
-          // Save the session ID
-          if (data.sessionId) {
-            setSessionId(data.sessionId);
-            localStorage.setItem('chatSessionId', data.sessionId);
-            console.log('📝 New session ID received and stored:', data.sessionId);
-          }
-          
-          // Add assistant welcome message
-          setMessages([{ 
-            role: 'assistant', 
-            content: data.response,
-            id: uuidv4()
-          }]);
-          
-          setIsLoading(false);
-          return true; // Signal that we've handled the customer loading
-        } catch (error) {
-          console.error('❌ Error loading customer from resourceNumber:', error);
-          setIsLoading(false);
-          return false;
-        }
+        return await loadCustomerProfile(resourceNumber);
       } else {
         // No resourceNumber, so fetch the standard welcome message
-        try {
-          setIsLoading(true);
-          const adminMode = checkAdminMode();
-          
-          const response = await fetch('/api/chat', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              message: "__WELCOME__",
-              isAdmin: adminMode
-            })
-          });
-          
-          if (!response.ok) {
-            throw new Error(`API error: ${response.status}`);
-          }
-          
-          const data = await response.json();
-          
-          // Save the session ID
-          if (data.sessionId) {
-            setSessionId(data.sessionId);
-            localStorage.setItem('chatSessionId', data.sessionId);
-            console.log('📝 New session ID received and stored:', data.sessionId);
-          }
-          
-          // Add assistant welcome message
-          setMessages([{ 
-            role: 'assistant', 
-            content: data.response,
-            id: uuidv4()
-          }]);
-          
-          setIsLoading(false);
-        } catch (error) {
-          console.error('❌ Error fetching welcome message:', error);
-          setIsLoading(false);
-        }
+        await fetchWelcomeMessage();
+        return false;
       }
-      
-      return false; // No resourceNumber found
     };
 
     const storedSessionId = localStorage.getItem('chatSessionId');
@@ -410,10 +324,69 @@ export default function Home() {
       setSessionId('');
       setErrorMessage('');
       
-      // Show reset message briefly, then fetch welcome message
+      // Preserve URL parameters for the new session
       setTimeout(() => {
         setIsResetting(false);
-        fetchWelcomeMessage(); // Get a welcome message for the new chat
+        
+        // Get URL parameters
+        const urlParams = new URLSearchParams(window.location.search);
+        const resourceNumber = urlParams.get('resourceNumber');
+        
+        if (resourceNumber) {
+          console.log('🔄 Reloading customer profile after reset');
+          // Format the complete resourceName with 'people/' prefix
+          const formattedNumber = resourceNumber.startsWith('c') ? resourceNumber : `c${resourceNumber}`;
+          const fullResourceName = `people/${formattedNumber}`;
+          
+          // Create a special initial message to load this customer
+          const initialMessage = `__LOAD_CUSTOMER__${fullResourceName}`;
+          
+          // Call the API to load this user
+          setIsLoading(true);
+          const adminMode = checkAdminMode();
+          
+          fetch('/api/chat', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              message: initialMessage,
+              isAdmin: adminMode
+            })
+          })
+          .then(response => {
+            if (!response.ok) {
+              throw new Error(`API error: ${response.status}`);
+            }
+            return response.json();
+          })
+          .then(data => {
+            // Save the session ID
+            if (data.sessionId) {
+              setSessionId(data.sessionId);
+              localStorage.setItem('chatSessionId', data.sessionId);
+              console.log('📝 New session ID received and stored:', data.sessionId);
+            }
+            
+            // Add assistant welcome message
+            setMessages([{ 
+              role: 'assistant', 
+              content: data.response,
+              id: uuidv4()
+            }]);
+          })
+          .catch(error => {
+            console.error('❌ Error loading customer after reset:', error);
+            fetchWelcomeMessage(); // Fallback to welcome message
+          })
+          .finally(() => {
+            setIsLoading(false);
+          });
+        } else {
+          // No resourceNumber, so fetch the standard welcome message
+          fetchWelcomeMessage();
+        }
       }, 1000);
     }
   };
@@ -461,6 +434,65 @@ export default function Home() {
       } finally {
         setIsClearingContext(false);
       }
+    }
+  };
+
+  // Function to load a customer profile from a resource number
+  const loadCustomerProfile = async (resourceNumber: string) => {
+    console.log('🔍 Loading customer profile for resourceNumber:', resourceNumber);
+    
+    // Format the complete resourceName with 'people/' prefix
+    // Check if resourceNumber already has the 'c' prefix
+    const formattedNumber = resourceNumber.startsWith('c') ? resourceNumber : `c${resourceNumber}`;
+    const fullResourceName = `people/${formattedNumber}`;
+    
+    console.log('🔍 Formatted resource name:', fullResourceName);
+    
+    // Create a special initial message to load this customer
+    const initialMessage = `__LOAD_CUSTOMER__${fullResourceName}`;
+    
+    // Call the API to load this user
+    try {
+      setIsLoading(true);
+      const adminMode = checkAdminMode();
+      
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          message: initialMessage,
+          isAdmin: adminMode
+        })
+      });
+      
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      
+      // Save the session ID
+      if (data.sessionId) {
+        setSessionId(data.sessionId);
+        localStorage.setItem('chatSessionId', data.sessionId);
+        console.log('📝 New session ID received and stored:', data.sessionId);
+      }
+      
+      // Add assistant welcome message
+      setMessages([{ 
+        role: 'assistant', 
+        content: data.response,
+        id: uuidv4()
+      }]);
+      
+      setIsLoading(false);
+      return true; // Signal that we've handled the customer loading
+    } catch (error) {
+      console.error('❌ Error loading customer from resourceNumber:', error);
+      setIsLoading(false);
+      return false;
     }
   };
 

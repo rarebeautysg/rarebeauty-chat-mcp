@@ -244,11 +244,20 @@ export async function POST(request: Request) {
       // Load customer from database using the resource name
       try {
         // Call our contacts API to get customer data
-        const apiEndpoint = `/api/contacts?resourceName=${resourceName}`;
-        const contactsResponse = await fetch(new URL(apiEndpoint, process.env.VERCEL_URL || 'http://localhost:3002'));
+        const apiEndpoint = `/api/contacts?resourceName=${encodeURIComponent(resourceName)}`;
+        console.log(`🌐 Calling contacts API endpoint: ${apiEndpoint}`);
+        
+        // Construct the full URL with the base URL
+        const baseUrl = process.env.VERCEL_URL || 'http://localhost:3002';
+        const fullUrl = new URL(apiEndpoint, baseUrl.startsWith('http') ? baseUrl : `http://${baseUrl}`);
+        console.log(`🌐 Full URL: ${fullUrl.toString()}`);
+        
+        const contactsResponse = await fetch(fullUrl);
         
         if (!contactsResponse.ok) {
-          throw new Error(`Failed to load customer: ${contactsResponse.status}`);
+          const errorText = await contactsResponse.text();
+          console.error(`❌ Contacts API error: ${contactsResponse.status}`, errorText);
+          throw new Error(`Failed to load customer: ${contactsResponse.status} - ${errorText.substring(0, 100)}`);
         }
         
         const contactData = await contactsResponse.json();
