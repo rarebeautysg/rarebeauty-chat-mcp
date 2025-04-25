@@ -12,7 +12,7 @@ export const viewport: Viewport = {
 
 export const metadata: Metadata = {
   title: 'Rare Beauty Chat',
-  description: 'Chat with our beauty assistant',
+  description: 'Chat with Rare Beauty AI assistant',
 }
 
 export default function RootLayout({
