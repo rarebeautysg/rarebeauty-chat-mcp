@@ -28,7 +28,7 @@ export {
 };
 
 // Export all tools as an array for easy import
-export const GoogleTools = [
+export const AppointmentTools = [
   lookupUserTool,
   getServicesTool,
   getAvailableSlotsTool,

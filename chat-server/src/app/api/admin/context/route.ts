@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { executors, userContexts, chatHistories, toolResults } from '@/app/api/chat/route';
+import { executors, toolResults } from '@/app/api/chat/route';
 
 // Handle DELETE requests to clear context for a specific session
 export async function DELETE(request: Request) {
@@ -22,16 +22,6 @@ export async function DELETE(request: Request) {
     
     if (executors.has(sessionId)) {
       executors.delete(sessionId);
-      cleared++;
-    }
-    
-    if (userContexts.has(sessionId)) {
-      userContexts.delete(sessionId);
-      cleared++;
-    }
-    
-    if (chatHistories.has(sessionId)) {
-      chatHistories.delete(sessionId);
       cleared++;
     }
     

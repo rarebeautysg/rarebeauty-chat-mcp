@@ -5,12 +5,17 @@ const cors = require('cors');
 const axios = require('axios');
 const dotenv = require('dotenv');
 const { v4: uuidv4 } = require('uuid');
+const jwt = require('jsonwebtoken');
 
 // Load environment variables
 dotenv.config();
 
 const app = express();
 const server = http.createServer(app);
+
+// MCP structured context - following Model Context Protocol
+// Each session has a structured context object
+const mcpContexts = new Map();
 
 // In-memory storage for user contexts and chat histories
 const userContexts = new Map();
@@ -19,24 +24,152 @@ const sessionSockets = new Map();
 
 // Configure CORS
 app.use(cors({
-  origin: process.env.CLIENT_URL || '*',
-  methods: ['GET', 'POST'],
-  credentials: true
+  origin: function(origin, callback) {
+    // Allow all origins during development
+    console.log(`🔄 CORS request from origin: ${origin}`);
+    callback(null, true);
+  },
+  methods: ['GET', 'POST', 'OPTIONS'],
+  credentials: true,
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
+
+// Parse JSON requests
+app.use(express.json());
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok', uptime: process.uptime() });
+  res.status(200).send('OK');
+});
+
+// JWT token verification endpoint
+app.post('/api/verify-token', async (req, res) => {
+  try {
+    const { token } = req.body;
+    
+    if (!token) {
+      return res.status(400).json({ isValid: false, message: 'No token provided' });
+    }
+    
+    // Get JWT secret from environment variables
+    const jwtSecret = process.env.JWT_SECRET;
+    
+    if (!jwtSecret) {
+      console.error('❌ JWT_SECRET not set in environment variables');
+      return res.status(500).json({ isValid: false, message: 'Server configuration error' });
+    }
+    
+    // Verify the token
+    const decoded = jwt.verify(token, jwtSecret);
+    
+    // Check if token is expired
+    const currentTime = Math.floor(Date.now() / 1000);
+    if (decoded.exp && decoded.exp < currentTime) {
+      return res.status(401).json({ isValid: false, message: 'Token has expired' });
+    }
+    
+    // Return the decoded data
+    return res.json({ isValid: true, decoded });
+  } catch (error) {
+    console.error('❌ Error verifying token:', error);
+    
+    if (error.name === 'JsonWebTokenError') {
+      return res.status(401).json({ isValid: false, message: 'Invalid token' });
+    }
+    
+    return res.status(500).json({ isValid: false, message: 'Server error' });
+  }
+});
+
+// AI Tools endpoint for external tools access
+app.post('/api/tools', async (req, res) => {
+  try {
+    const { tool, params, sessionId } = req.body;
+    
+    if (!tool) {
+      return res.status(400).json({ success: false, message: 'No tool specified' });
+    }
+    
+    // Check if we have an API endpoint to forward to
+    const toolsApiUrl = process.env.TOOLS_API_URL || 'http://localhost:3002/api/tools';
+    
+    // Forward the request to the tools API
+    const toolResponse = await axios.post(toolsApiUrl, {
+      tool,
+      params,
+      sessionId
+    });
+    
+    // Return the response
+    return res.status(200).json(toolResponse.data);
+  } catch (error) {
+    console.error('❌ Error calling tool:', error);
+    return res.status(500).json({ 
+      success: false, 
+      message: 'Error calling tool',
+      error: error.message
+    });
+  }
 });
 
 // Setup Socket.IO
 const io = new Server(server, {
   cors: {
-    origin: process.env.CLIENT_URL || '*',
-    methods: ['GET', 'POST'],
-    credentials: true
+    origin: function(origin, callback) {
+      // Allow all origins during development
+      console.log(`🔄 Socket.IO CORS request from origin: ${origin}`);
+      callback(null, true);
+    },
+    methods: ['GET', 'POST', 'OPTIONS'],
+    credentials: true,
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
   }
 });
+
+// Helper function to initialize a new MCP context
+function createNewMCPContext(sessionId, isAdmin = false) {
+  return {
+    identity: {
+      session_id: sessionId,
+      persona: isAdmin ? "admin" : "customer",
+      is_admin: isAdmin
+    },
+    goals: [],
+    instructions: isAdmin 
+      ? "Help admin manage customer appointments, lookup customers, and add new contacts."
+      : "Help customer book appointments and learn about services.",
+    memory: {
+      user_info: null,
+      last_selected_service: null,
+      preferred_date: null,
+      preferred_time: null
+    },
+    tools: isAdmin
+      ? ["lookupUser", "createContact", "getServices", "getAvailableSlots", "bookAppointment"] 
+      : ["lookupUser", "getServices", "getAvailableSlots", "bookAppointment"],
+    history: []
+  };
+}
+
+// Helper function to update user info in MCP context
+function updateUserInfo(sessionId, userInfo) {
+  if (!mcpContexts.has(sessionId)) {
+    return false;
+  }
+  
+  const context = mcpContexts.get(sessionId);
+  context.memory.user_info = userInfo;
+  context.identity.user_id = userInfo.resourceName;
+  
+  // If this is a returning customer, update goals and instructions
+  if (userInfo.name) {
+    context.identity.persona = "returning_customer";
+    context.instructions = `Assist ${userInfo.name} with booking appointments. Personalize the conversation and reference their history if available.`;
+  }
+  
+  mcpContexts.set(sessionId, context);
+  return true;
+}
 
 // Socket connection handler
 io.on('connection', (socket) => {
@@ -51,6 +184,12 @@ io.on('connection', (socket) => {
     console.log(`📝 Generated new session ID: ${sessionId}`);
   }
   
+  // Initialize MCP context if it doesn't exist
+  if (!mcpContexts.has(sessionId)) {
+    mcpContexts.set(sessionId, createNewMCPContext(sessionId));
+    console.log(`🧠 Created new MCP context for session ${sessionId}`);
+  }
+  
   // Store the socket by session ID
   sessionSockets.set(sessionId, socket);
   
@@ -61,6 +200,22 @@ io.on('connection', (socket) => {
   socket.on('welcome', async (data) => {
     console.log(`🌟 Welcome message requested for session ${sessionId}`);
     const isAdmin = data.isAdmin === true;
+    
+    // Update MCP context if admin status changed
+    if (mcpContexts.has(sessionId)) {
+      const context = mcpContexts.get(sessionId);
+      if (context.identity.is_admin !== isAdmin) {
+        mcpContexts.set(sessionId, createNewMCPContext(sessionId, isAdmin));
+        console.log(`🧠 Reset MCP context for session ${sessionId} with admin=${isAdmin}`);
+      }
+    } else {
+      mcpContexts.set(sessionId, createNewMCPContext(sessionId, isAdmin));
+    }
+    
+    // Update goals for this session
+    const context = mcpContexts.get(sessionId);
+    context.goals = ["initiate_conversation"];
+    mcpContexts.set(sessionId, context);
     
     const welcomeMessage = isAdmin 
       ? "Welcome, Admin. Can I have the customer's mobile number so I can better help you?"
@@ -78,6 +233,11 @@ io.on('connection', (socket) => {
     console.log(`🔍 Loading customer for session ${sessionId}: ${data.resourceName}`);
     const isAdmin = data.isAdmin === true;
     
+    // Ensure MCP context exists with correct admin status
+    if (!mcpContexts.has(sessionId) || mcpContexts.get(sessionId).identity.is_admin !== isAdmin) {
+      mcpContexts.set(sessionId, createNewMCPContext(sessionId, isAdmin));
+    }
+    
     try {
       // Call contacts API to get customer data
       const apiEndpoint = `${process.env.API_URL || 'http://localhost:3002'}/api/contacts?resourceName=${encodeURIComponent(data.resourceName)}`;
@@ -91,16 +251,21 @@ io.on('connection', (socket) => {
       
       const customer = contactData.contact;
       
-      // Add customer to user context for this session
-      const updatedContext = {
+      // Update MCP context with customer information
+      const context = mcpContexts.get(sessionId);
+      context.memory.user_info = {
         resourceName: customer.resourceName,
         name: customer.name,
         mobile: customer.mobile,
         updatedAt: new Date().toISOString()
       };
+      context.identity.user_id = customer.resourceName;
+      context.identity.persona = "returning_customer";
+      context.goals = ["provide_service_information", "book_appointment"];
+      context.instructions = `Assist ${customer.name} with booking appointments. Personalize the conversation and reference their history if available.`;
       
-      userContexts.set(sessionId, updatedContext);
-      console.log('✅ Stored customer context for session', sessionId, ':', updatedContext);
+      mcpContexts.set(sessionId, context);
+      console.log('✅ Updated MCP context with customer data for session', sessionId);
       
       // Return personalized welcome message
       const welcomeMessage = isAdmin 
@@ -136,35 +301,55 @@ io.on('connection', (socket) => {
       // Show typing indicator
       socket.emit('typing', true);
       
-      // Get user context if it exists from memory
-      const userContext = userContexts.get(sessionId);
-      if (userContext) {
-        console.log(`👤 Found existing user context for session ${sessionId}:`, userContext);
+      // Get MCP context or create if it doesn't exist
+      if (!mcpContexts.has(sessionId)) {
+        mcpContexts.set(sessionId, createNewMCPContext(sessionId, data.isAdmin));
       }
       
-      // Get existing chat history or initialize a new one
-      if (!chatHistories.has(sessionId)) {
-        chatHistories.set(sessionId, []);
-        console.log(`📝 Created new chat history for session ${sessionId}`);
+      const context = mcpContexts.get(sessionId);
+      
+      // Update admin status if it changed
+      if (context.identity.is_admin !== data.isAdmin) {
+        context.identity.is_admin = data.isAdmin;
+        context.identity.persona = data.isAdmin ? "admin" : "customer";
+        context.tools = data.isAdmin
+          ? ["lookupUser", "createContact", "getServices", "getAvailableSlots", "bookAppointment"] 
+          : ["lookupUser", "getServices", "getAvailableSlots", "bookAppointment"];
       }
-      const history = chatHistories.get(sessionId);
       
       // Add user message to history
-      history.push({ role: 'human', content: data.message });
+      context.history.push({ role: 'human', content: data.message });
+      mcpContexts.set(sessionId, context);
       
-      // Prepare input with user context if available
-      let inputToUse = data.message;
-      if (userContext?.resourceName) {
-        inputToUse = `${data.message} (User context: ResourceName=${userContext.resourceName}, Name=${userContext.name}, Mobile=${userContext.mobile})`;
-        console.log('📝 Enhanced input with user context for session', sessionId);
+      // Infer goals from message content (simple heuristics)
+      if (data.message.toLowerCase().includes('book') || data.message.toLowerCase().includes('appointment')) {
+        if (!context.goals.includes('book_appointment')) {
+          context.goals.push('book_appointment');
+        }
       }
       
-      // Call AI service API endpoint with the chat
+      if (data.message.toLowerCase().includes('service') || data.message.toLowerCase().includes('price')) {
+        if (!context.goals.includes('provide_service_information')) {
+          context.goals.push('provide_service_information');
+        }
+      }
+      
+      // Prepare enriched input with MCP context
+      const mcpContext = {
+        identity: context.identity,
+        goals: context.goals,
+        instructions: context.instructions,
+        memory: context.memory,
+        tools: context.tools,
+        history: context.history.slice(-10) // Include last 10 messages to avoid too much data
+      };
+      
+      // Call AI service API endpoint with the chat and MCP context
       const aiServiceUrl = `${process.env.AI_SERVICE_URL || 'http://localhost:3002/api/chat'}`;
       const aiResponse = await axios.post(aiServiceUrl, {
-        message: inputToUse,
+        message: data.message,
         sessionId: sessionId,
-        history: history,
+        mcpContext: mcpContext,
         isAdmin: data.isAdmin === true
       });
       
@@ -174,7 +359,32 @@ io.on('connection', (socket) => {
       console.log(`📤 Generated response for session ${sessionId}: "${responseContent.substring(0, 100)}${responseContent.length > 100 ? '...' : ''}"`);
       
       // Add assistant response to history
-      history.push({ role: 'assistant', content: responseContent });
+      context.history.push({ role: 'assistant', content: responseContent });
+      
+      // Check for service or appointment preferences in the conversation and update memory
+      if (responseContent.toLowerCase().includes('service') && responseContent.match(/['"](.*?)['"]/) !== null) {
+        const serviceMatch = responseContent.match(/['"]([^'"]*lashes[^'"]*)['"]/i) || 
+                          responseContent.match(/['"]([^'"]*facial[^'"]*)['"]/i) ||
+                          responseContent.match(/['"]([^'"]*waxing[^'"]*)['"]/i);
+        if (serviceMatch) {
+          context.memory.last_selected_service = serviceMatch[1];
+        }
+      }
+      
+      if (responseContent.toLowerCase().includes('appointment') || responseContent.toLowerCase().includes('book')) {
+        const dateMatch = responseContent.match(/(\d{1,2}(?:st|nd|rd|th)? [A-Za-z]+ \d{4}|\d{4}-\d{2}-\d{2})/);
+        if (dateMatch) {
+          context.memory.preferred_date = dateMatch[1];
+        }
+        
+        const timeMatch = responseContent.match(/(\d{1,2}(?::\d{2})? ?(?:am|pm))/i);
+        if (timeMatch) {
+          context.memory.preferred_time = timeMatch[1];
+        }
+      }
+      
+      // Update MCP context
+      mcpContexts.set(sessionId, context);
       
       // Stop typing indicator
       socket.emit('typing', false);
@@ -205,13 +415,11 @@ io.on('connection', (socket) => {
     try {
       console.log(`🧹 Clearing context for session ${sessionId}`);
       
-      // Remove user context
-      userContexts.delete(sessionId);
+      // Save admin status before clearing
+      const isAdmin = mcpContexts.has(sessionId) ? mcpContexts.get(sessionId).identity.is_admin : false;
       
-      // Clear chat history
-      if (chatHistories.has(sessionId)) {
-        chatHistories.delete(sessionId);
-      }
+      // Reset MCP context
+      mcpContexts.set(sessionId, createNewMCPContext(sessionId, isAdmin));
       
       socket.emit('contextCleared', { success: true });
     } catch (error) {
@@ -223,16 +431,85 @@ io.on('connection', (socket) => {
     }
   });
   
-  // API to get user context
+  // API to get MCP context
   socket.on('getContext', () => {
-    const context = userContexts.get(sessionId) || null;
+    const context = mcpContexts.has(sessionId) ? mcpContexts.get(sessionId) : createNewMCPContext(sessionId);
     socket.emit('context', { context });
   });
   
   // API to get chat history
   socket.on('getHistory', () => {
-    const history = chatHistories.get(sessionId) || [];
+    const history = mcpContexts.has(sessionId) ? mcpContexts.get(sessionId).history : [];
     socket.emit('history', { history });
+  });
+  
+  // Handle tool usage request
+  socket.on('useTool', async (data) => {
+    try {
+      const { tool, params } = data;
+      
+      console.log(`🔧 Tool request for session ${sessionId}: ${tool}`);
+      
+      // Update MCP context with tool usage
+      if (mcpContexts.has(sessionId)) {
+        const context = mcpContexts.get(sessionId);
+        
+        // Track tool usage in memory
+        if (!context.memory.tool_usage) {
+          context.memory.tool_usage = {};
+        }
+        
+        if (!context.memory.tool_usage[tool]) {
+          context.memory.tool_usage[tool] = [];
+        }
+        
+        // Store tool parameters and timestamp
+        context.memory.tool_usage[tool].push({
+          timestamp: new Date().toISOString(),
+          params: params
+        });
+        
+        // Update memory based on tool and parameters
+        if (tool === 'lookupUser' && params.mobile) {
+          context.memory.last_mobile_lookup = params.mobile;
+        } else if (tool === 'getAvailableSlots' && params.date) {
+          context.memory.preferred_date = params.date;
+          if (params.serviceIds && params.serviceIds.length > 0) {
+            context.memory.last_selected_service = params.serviceIds[0];
+          }
+        } else if (tool === 'bookAppointment') {
+          if (params.serviceIds && params.serviceIds.length > 0) {
+            context.memory.last_selected_service = params.serviceIds[0];
+          }
+          if (params.date) context.memory.preferred_date = params.date;
+          if (params.time) context.memory.preferred_time = params.time;
+        }
+        
+        mcpContexts.set(sessionId, context);
+      }
+      
+      // Call tools API
+      const toolsApiUrl = `${process.env.TOOLS_API_URL || 'http://localhost:3002/api/tools'}`;
+      const toolResponse = await axios.post(toolsApiUrl, {
+        tool,
+        params,
+        sessionId
+      });
+      
+      // Send back the result
+      socket.emit('toolResult', {
+        success: true,
+        tool,
+        result: toolResponse.data.result
+      });
+    } catch (error) {
+      console.error('❌ Error using tool:', error);
+      socket.emit('toolResult', {
+        success: false,
+        tool: data.tool,
+        error: error.message
+      });
+    }
   });
   
   // Handle disconnection
@@ -265,7 +542,7 @@ app.get('/api/history/:sessionId', (req, res) => {
 });
 
 // Set context for a session
-app.post('/api/context/:sessionId', express.json(), (req, res) => {
+app.post('/api/context/:sessionId', (req, res) => {
   const { sessionId } = req.params;
   const { context } = req.body;
   

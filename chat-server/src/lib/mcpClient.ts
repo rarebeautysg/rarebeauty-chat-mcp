@@ -16,11 +16,25 @@ export interface UserContext {
   [key: string]: any;
 }
 
+export interface ToolResult {
+  success: boolean;
+  tool: string;
+  result?: any;
+  error?: string;
+}
+
+export interface VerifyTokenResult {
+  isValid: boolean;
+  decoded?: any;
+  message?: string;
+}
+
 type MessageHandler = (message: Message) => void;
 type TypingHandler = (isTyping: boolean) => void;
 type ConnectionHandler = (isConnected: boolean) => void;
 type ContextHandler = (context: UserContext | null) => void;
 type HistoryHandler = (history: Message[]) => void;
+type ToolResultHandler = (result: ToolResult) => void;
 
 export class MCPClient {
   private socket: Socket | null = null;
@@ -30,6 +44,7 @@ export class MCPClient {
   private connectionHandlers: ConnectionHandler[] = [];
   private contextHandlers: ContextHandler[] = [];
   private historyHandlers: HistoryHandler[] = [];
+  private toolResultHandlers: Map<string, ToolResultHandler[]> = new Map();
   private isAdmin: boolean = false;
   private serverUrl: string = '';
   
@@ -49,9 +64,25 @@ export class MCPClient {
   
   private initSocket(serverUrl: string): void {
     try {
-      // Create socket connection
+      console.log(`🔄 Connecting to MCP server at ${serverUrl}`);
+      
+      // Create socket connection with debug logging
       this.socket = io(serverUrl, {
         query: this.sessionId ? { sessionId: this.sessionId } : undefined,
+        withCredentials: true,
+        transports: ['websocket', 'polling'],
+        forceNew: true,
+        reconnectionAttempts: 5,
+        timeout: 10000
+      });
+      
+      // Add connection debugging events
+      this.socket.on('connect_error', (err) => {
+        console.error(`🔴 Socket connection error: ${err.message}`);
+      });
+      
+      this.socket.on('error', (err) => {
+        console.error(`🔴 Socket error: ${err}`);
       });
       
       // Session ID assignment
@@ -82,16 +113,24 @@ export class MCPClient {
         this.historyHandlers.forEach(handler => handler(history));
       });
       
+      // Tool result handling
+      this.socket.on('toolResult', (result: ToolResult) => {
+        // Get handlers for this specific tool
+        const handlers = this.toolResultHandlers.get(result.tool) || [];
+        
+        // Call all handlers
+        handlers.forEach(handler => handler(result));
+        
+        // Remove these handlers after calling them
+        this.toolResultHandlers.delete(result.tool);
+      });
+      
       // Connection events
       this.socket.on('connect', () => {
         this.connectionHandlers.forEach(handler => handler(true));
       });
       
       this.socket.on('disconnect', () => {
-        this.connectionHandlers.forEach(handler => handler(false));
-      });
-      
-      this.socket.on('connect_error', () => {
         this.connectionHandlers.forEach(handler => handler(false));
       });
     } catch (error) {
@@ -188,6 +227,94 @@ export class MCPClient {
   public getHistory(): void {
     if (!this.socket) return;
     this.socket.emit('getHistory');
+  }
+  
+  // Use a tool with the provided parameters
+  public useTool(tool: string, params: any): Promise<any> {
+    if (!this.socket) {
+      return Promise.reject(new Error('Socket not connected'));
+    }
+    
+    // Store socket in a local constant to assure TypeScript it's not null
+    const socket = this.socket;
+    
+    return new Promise((resolve, reject) => {
+      // Add handler for this specific tool result
+      const handlers = this.toolResultHandlers.get(tool) || [];
+      handlers.push((result) => {
+        if (result.success) {
+          resolve(result.result);
+        } else {
+          reject(new Error(result.error || 'Tool execution failed'));
+        }
+      });
+      this.toolResultHandlers.set(tool, handlers);
+      
+      // Send the tool request
+      socket.emit('useTool', { tool, params });
+    });
+  }
+  
+  // Verify JWT token
+  public async verifyToken(token: string): Promise<VerifyTokenResult> {
+    try {
+      const apiUrl = `${this.serverUrl}/api/verify-token`;
+      
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ token })
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        return {
+          isValid: false,
+          message: errorData.message || 'Token verification failed'
+        };
+      }
+      
+      const data = await response.json();
+      return data;
+    } catch (error) {
+      console.error('Error verifying token:', error);
+      return {
+        isValid: false,
+        message: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+  
+  // Call a tool via HTTP API (alternative to socket method)
+  public async callTool(tool: string, params: any): Promise<any> {
+    try {
+      const apiUrl = `${this.serverUrl}/api/tools`;
+      
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          tool,
+          params,
+          sessionId: this.sessionId
+        })
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Tool execution failed');
+      }
+      
+      const data = await response.json();
+      return data.result;
+    } catch (error) {
+      console.error(`Error calling tool ${tool}:`, error);
+      throw error;
+    }
   }
   
   // Disconnect socket

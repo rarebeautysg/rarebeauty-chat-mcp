@@ -6,7 +6,7 @@ import { Loading } from '@/components/Loading';
 
 // Dynamically import MCPChat with SSR disabled to prevent hydration issues
 const MCPChat = dynamic(
-  () => import('@/components/MCPChat').then((mod) => mod.MCPChat),
+  () => import('@/components/MCPChat').then(mod => mod.MCPChat),
   { 
     ssr: false,
     loading: () => (
@@ -18,7 +18,7 @@ const MCPChat = dynamic(
 );
 
 // Main component with admin check
-export default function MCPPage() {
+export default function Home() {
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
   
   // Helper function to check if admin mode should be active
@@ -119,4 +119,4 @@ export default function MCPPage() {
   const mcpServerUrl = process.env.NEXT_PUBLIC_MCP_URL || undefined;
 
   return <MCPChat isAdmin={checkAdminMode()} serverUrl={mcpServerUrl} />;
-} 
+}

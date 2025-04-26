@@ -1,6 +1,95 @@
-# Rare Beauty Chat
+# Rare Beauty Chat Application
 
-A conversational AI chat interface for Rare Beauty Professional salon in Singapore. This application enables customers to inquire about services, check availability, and book appointments through a natural language chat interface.
+This is a modern chat application for Rare Beauty salon, built with Next.js, TypeScript, and WebSockets.
+
+## Architecture
+
+The application is composed of two main components:
+
+1. **Main Chat Application**: A Next.js application providing the user interface and API endpoints
+2. **MCP Server**: A dedicated WebSocket server for Memory and Context Persistence
+
+## Features
+
+- Real-time chat with AI assistant
+- WebSocket-based communication for instant messaging
+- Integration with salon booking system
+- Mobile-responsive design
+- Admin mode for salon staff
+
+## Getting Started
+
+### Prerequisites
+
+- Node.js 20+
+- npm or yarn
+
+### Installation
+
+1. Clone the repository
+2. Install dependencies for the main app:
+
+```bash
+npm install
+```
+
+3. Install dependencies for the MCP server:
+
+```bash
+cd mcp-server
+npm install
+```
+
+### Development
+
+1. Start the MCP server:
+
+```bash
+cd mcp-server
+npm run dev
+```
+
+2. In a separate terminal, start the main app:
+
+```bash
+npm run dev
+```
+
+3. Open [http://localhost:3002](http://localhost:3002) in your browser
+
+## Deployment
+
+The application is deployed using Docker and AWS ECS. See deployment guides:
+
+- [Main Application Deployment](./aws/README.md)
+- [MCP Server Deployment](./mcp-server/README.md)
+
+## Environment Variables
+
+### Main App
+
+```
+OPENAI_API_KEY=your_openai_api_key
+NEXT_PUBLIC_MCP_URL=ws://localhost:3003  # For local dev, use wss:// in production
+```
+
+### MCP Server
+
+```
+PORT=3003
+NODE_ENV=development  # or production
+```
+
+## Admin Mode
+
+Access admin mode by adding `?admin=true` to the URL in development:
+http://localhost:3002/?admin=true
+
+In production, admin access is protected by JWT authentication.
+
+## License
+
+This project is proprietary and confidential.
 
 ## Features
 
@@ -17,43 +106,6 @@ A conversational AI chat interface for Rare Beauty Professional salon in Singapo
 - **AI/ML**: OpenAI API, LangChain
 - **State Management**: React hooks
 - **Styling**: Tailwind CSS with custom components
-
-## Getting Started
-
-### Prerequisites
-
-- Node.js 18.x or later
-- npm or yarn
-- OpenAI API key
-
-### Installation
-
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/rarebeautysg/rarebeauty-chat.git
-   cd rarebeauty-chat
-   ```
-
-2. Install dependencies:
-   ```bash
-   npm install
-   # or
-   yarn install
-   ```
-
-3. Create `.env.local` file in the root directory with your API keys:
-   ```
-   OPENAI_API_KEY=your_openai_api_key_here
-   ```
-
-4. Start the development server:
-   ```bash
-   npm run dev
-   # or
-   yarn dev
-   ```
-
-5. Open [http://localhost:3002](http://localhost:3002) in your browser to see the application.
 
 ## Development
 
@@ -102,18 +154,6 @@ The application uses LangChain tools to handle specific functionality:
 - **getServices**: Retrieve service listings and pricing
 - **getAvailableSlots**: Check appointment availability
 - **bookAppointment**: Create new appointments
-
-## Deployment
-
-The application can be deployed to Vercel or any other Next.js compatible hosting service.
-
-### Deploy to Vercel
-
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fyourusername%2Frarebeauty-chat)
-
-## License
-
-This project is licensed under the MIT License.
 
 ## Acknowledgements
 
