@@ -12,11 +12,17 @@ RUN npm ci --only=production
 # Copy application code
 COPY . .
 
+# Attempt to copy .env.production as .env if it exists
+RUN if [ -f .env.production ]; then cp .env.production .env; fi
+
 # Expose the port the app runs on
 EXPOSE 3003
 
 # Set environment variables
 ENV NODE_ENV production
+
+# Note: MCP server loads .env or .env.local based on NODE_ENV
+# For production deployment, ensure .env file is present or use environment variables
 
 # Command to run the application
 CMD ["node", "server.js"] 

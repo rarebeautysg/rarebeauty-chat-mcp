@@ -7,4 +7,4 @@ export async function GET() {
     uptime: process.uptime(),
     version: process.env.npm_package_version || 'unknown',
   });
-} 
+}

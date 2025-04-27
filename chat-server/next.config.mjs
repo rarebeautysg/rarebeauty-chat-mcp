@@ -8,9 +8,10 @@ const nextConfig = {
     // your project has ESLint errors.
     ignoreDuringBuilds: true,
   },
-  // Make environment variables available
+  // Make environment variables available for frontend
   env: {
     SOHO_API_URL: process.env.SOHO_API_URL,
+    NEXT_PUBLIC_MCP_URL: process.env.NEXT_PUBLIC_MCP_URL,
   },
 };
 

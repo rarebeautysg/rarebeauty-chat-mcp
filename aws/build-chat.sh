@@ -1,0 +1,46 @@
+#!/bin/bash
+set -e
+
+# Configuration
+AWS_REGION="ap-southeast-1"  # Singapore region
+ECR_REPOSITORY="rarebeauty-chat"
+ECS_CLUSTER="SOHO-APPT"
+ECS_SERVICE="rarebeauty-chat-service"
+TASK_FAMILY="rarebeauty-chat-task"
+IMAGE_TAG="latest"
+AWS_ACCOUNT_ID="292376945194"
+
+# Change to Chat server directory
+cd "$(dirname "$0")/../chat-server"
+
+echo "✅ Production environment file created: .env.production"
+
+# Verify the content of .env.production
+echo "Content of .env.production:"
+cat .env.production
+
+echo "Logging in to Amazon ECR..."
+aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+
+# Build the Docker image
+echo "Building the Docker image..."
+docker build --platform linux/amd64 -t $ECR_REPOSITORY:$IMAGE_TAG .
+
+# Verify the image was built
+if [ $? -eq 0 ]; then
+    echo "✅ Docker image built successfully"
+else
+    echo "❌ Docker image build failed"
+    exit 1
+fi
+
+# Tag the image for ECR
+echo "Tagging the image for ECR..."
+docker tag $ECR_REPOSITORY:$IMAGE_TAG $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY:$IMAGE_TAG
+
+# Push the image to ECR
+echo "Pushing the image to ECR..."
+docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY:$IMAGE_TAG
+
+echo "✅ Build and push completed successfully!"
+echo "Image: $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY:$IMAGE_TAG" 

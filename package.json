@@ -1,0 +1,20 @@
+{
+  "name": "rarebeauty-chat-project",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Rare Beauty Chat Application",
+  "scripts": {
+    "dev:mcp": "cd mcp-server && npm run dev",
+    "dev:chat": "cd chat-server && npm run dev",
+    "dev": "concurrently \"npm run dev:mcp\" \"npm run dev:chat\"",
+    "build:mcp": "cd mcp-server && npm run build",
+    "build:chat": "cd chat-server && npm run build",
+    "build": "npm run build:mcp && npm run build:chat",
+    "start:mcp": "cd mcp-server && npm start",
+    "start:chat": "cd chat-server && npm start",
+    "start": "concurrently \"npm run start:mcp\" \"npm run start:chat\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+} 

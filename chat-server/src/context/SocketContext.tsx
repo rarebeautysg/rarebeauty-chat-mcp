@@ -1,318 +1,235 @@
-import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useState, useRef, ReactNode } from 'react';
+import { io, Socket } from 'socket.io-client';
 import { v4 as uuidv4 } from 'uuid';
-import type { Socket } from 'socket.io-client';
+import { Message, UserContext, ConnectionStatus } from '@/types/socket';
 
-// Types
-export interface Message {
-  role: 'user' | 'assistant';
-  content: string;
-  id: string;
-}
-
-// Connection status enum for better state management
-enum ConnectionStatus {
-  DISCONNECTED = 'disconnected',
-  CONNECTING = 'connecting',
-  CONNECTED = 'connected',
-  ERROR = 'error'
-}
-
-// Chat initialization state
-enum ChatState {
-  UNINITIALIZED = 'uninitialized',
-  WELCOME_REQUESTED = 'welcome_requested',
-  WELCOME_RECEIVED = 'welcome_received',
-  CUSTOMER_REQUESTED = 'customer_requested',
-  CUSTOMER_LOADED = 'customer_loaded'
-}
-
-// Context type
 interface SocketContextType {
   socket: Socket | null;
   messages: Message[];
-  setMessages: React.Dispatch<React.SetStateAction<Message[]>>;
-  isLoading: boolean;
   isConnected: boolean;
-  sessionId: string;
-  sendMessage: (content: string) => void;
-  loadCustomer: (resourceName: string) => void;
+  isTyping: boolean;
+  sessionId: string | null;
+  sendMessage: (content: string, isAdmin?: boolean) => void;
+  loadCustomer: (resourceName: string, isAdmin?: boolean) => void;
   clearContext: () => void;
-  resetChat: () => void;
+  connectionStatus: ConnectionStatus;
+  isCustomerLoaded: boolean;
 }
 
-// Create context with default values
-const SocketContext = createContext<SocketContextType>({
-  socket: null,
-  messages: [],
-  setMessages: () => {},
-  isLoading: false,
-  isConnected: false,
-  sessionId: '',
-  sendMessage: () => {},
-  loadCustomer: () => {},
-  clearContext: () => {},
-  resetChat: () => {},
-});
+interface SocketProviderProps {
+  children: ReactNode;
+  isAdmin?: boolean;
+}
 
-// Provider component
-export const SocketProvider: React.FC<{ 
-  children: React.ReactNode;
-  isAdmin: boolean;
-}> = ({ children, isAdmin }) => {
-  // Core state
+const SocketContext = createContext<SocketContextType | undefined>(undefined);
+
+export const SocketProvider: React.FC<SocketProviderProps> = ({ 
+  children, 
+  isAdmin = false 
+}) => {
   const [socket, setSocket] = useState<Socket | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [sessionId, setSessionId] = useState<string>('');
-  
-  // Status tracking with proper state machines
-  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>(ConnectionStatus.DISCONNECTED);
-  const [chatState, setChatState] = useState<ChatState>(ChatState.UNINITIALIZED);
-  
-  // Store isAdmin in ref to ensure it's not stale in effects
+  const [isConnected, setIsConnected] = useState(false);
+  const [isTyping, setIsTyping] = useState(false);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('disconnected');
+  const [isCustomerLoaded, setIsCustomerLoaded] = useState(false);
+  const customerLoadAttemptedRef = useRef(false);
+  const welcomeMessageRequestedRef = useRef(false);
   const isAdminRef = useRef(isAdmin);
-  
-  // Update ref when isAdmin changes
+  const socketInitializedRef = useRef(false);
+
+  // Update admin ref when prop changes
   useEffect(() => {
     isAdminRef.current = isAdmin;
-    console.log('👤 Admin status:', isAdmin);
   }, [isAdmin]);
-  
-  // Initialize socket only once
+
+  // Initialize socket connection only once
   useEffect(() => {
-    // Skip during server-side rendering
-    if (typeof window === 'undefined') return;
-    
-    // Only initialize if we're disconnected
-    if (connectionStatus !== ConnectionStatus.DISCONNECTED) return;
-    
-    // Set connecting state
-    setConnectionStatus(ConnectionStatus.CONNECTING);
-    
-    const setupSocket = async () => {
-      try {
-        const io = (await import('socket.io-client')).io;
-        const storedSessionId = localStorage.getItem('chatSessionId');
-        
-        const socketIo = io({
-          path: '/api/socketio',
-          query: storedSessionId ? { sessionId: storedSessionId } : undefined,
-        });
-        
-        // Set socket instance
-        setSocket(socketIo);
-        
-        // Connect event
-        socketIo.on('connect', () => {
-          console.log('🔌 Socket connected');
-          setConnectionStatus(ConnectionStatus.CONNECTED);
-        });
-        
-        // Disconnect event
-        socketIo.on('disconnect', () => {
-          console.log('🔌 Socket disconnected');
-          setConnectionStatus(ConnectionStatus.DISCONNECTED);
-        });
-        
-        // Connection error
-        socketIo.on('connect_error', (error: Error) => {
-          console.error('❌ Socket connection error:', error);
-          setConnectionStatus(ConnectionStatus.ERROR);
-        });
-        
-        // Session assignment
-        socketIo.on('session', (data: { sessionId: string }) => {
-          console.log('📝 Received session ID:', data.sessionId);
+    // Prevent multiple socket connections
+    if (socketInitializedRef.current) return;
+    socketInitializedRef.current = true;
+
+    // Get MCP URL from environment or use default
+    const MCP_URL = process.env.NEXT_PUBLIC_MCP_URL || 'http://localhost:3003';
+    console.log(`🔌 Connecting to MCP server at: ${MCP_URL}`);
+    setConnectionStatus('connecting');
+
+    try {
+      // Get stored session ID or create a new one
+      const storedSessionId = typeof window !== 'undefined' 
+        ? localStorage.getItem('sessionId') || uuidv4()
+        : uuidv4();
+      
+      // Initialize socket with session ID
+      const socketInstance = io(MCP_URL, {
+        query: { sessionId: storedSessionId },
+        transports: ['websocket', 'polling'],
+        reconnectionAttempts: 5,
+        reconnectionDelay: 1000,
+        timeout: 10000,
+      });
+
+      // Set session ID and store it
+      setSessionId(storedSessionId);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('sessionId', storedSessionId);
+      }
+
+      // Set up event handlers
+      socketInstance.on('connect', () => {
+        console.log('🔌 Socket connected');
+        setIsConnected(true);
+        setConnectionStatus('connected');
+      });
+
+      socketInstance.on('disconnect', () => {
+        console.log('🔌 Socket disconnected');
+        setIsConnected(false);
+        setConnectionStatus('disconnected');
+      });
+
+      socketInstance.on('connect_error', (err) => {
+        console.error('🔌 Socket connection error:', err);
+        setConnectionStatus('error');
+      });
+
+      socketInstance.on('error', (err) => {
+        console.error('🔌 Socket error:', err);
+        setConnectionStatus('error');
+      });
+
+      socketInstance.on('session', (data) => {
+        console.log('📝 Session data received:', data);
+        if (data.sessionId) {
           setSessionId(data.sessionId);
-          localStorage.setItem('chatSessionId', data.sessionId);
-        });
-        
-        // Message receipt
-        socketIo.on('message', (message: Message) => {
-          console.log('📥 Received message:', message);
-          
-          // Update chat state when welcome message arrives
-          if (chatState === ChatState.WELCOME_REQUESTED) {
-            setChatState(ChatState.WELCOME_RECEIVED);
-          }
-          
-          // Update chat state when customer is loaded
-          if (chatState === ChatState.CUSTOMER_REQUESTED) {
-            setChatState(ChatState.CUSTOMER_LOADED);
-          }
-          
-          // Add message to state, avoiding duplicates
-          setMessages(prev => {
-            // Check if message already exists
-            const isDuplicate = prev.some(m => 
-              m.role === message.role && m.content === message.content
-            );
-            
-            return isDuplicate ? prev : [...prev, message];
-          });
-        });
-        
-        // Typing indicator
-        socketIo.on('typing', (isTyping: boolean) => {
-          setIsLoading(isTyping);
-        });
-        
-        // Load stored messages
-        if (storedSessionId) {
-          setSessionId(storedSessionId);
-          const storedMessages = localStorage.getItem(`chatMessages-${storedSessionId}`);
-          if (storedMessages) {
-            try {
-              const parsedMessages = JSON.parse(storedMessages);
-              setMessages(parsedMessages);
-              
-              // If we have stored messages, mark chat as initialized
-              if (parsedMessages.length > 0) {
-                setChatState(ChatState.WELCOME_RECEIVED);
-              }
-            } catch (error) {
-              console.error('❌ Error parsing stored messages:', error);
-            }
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('sessionId', data.sessionId);
           }
         }
-        
-        // Return cleanup function
-        return () => {
-          socketIo.disconnect();
-        };
-      } catch (error) {
-        console.error('❌ Failed to initialize socket:', error);
-        setConnectionStatus(ConnectionStatus.ERROR);
-      }
-    };
-    
-    setupSocket();
-  }, [connectionStatus]); // Only re-run if connection status changes
-  
-  // Initialize chat - either with welcome message or customer data
-  useEffect(() => {
-    // Skip if not in browser
-    if (typeof window === 'undefined') return;
-    
-    // Only proceed if we're connected and chat is not initialized
-    if (connectionStatus !== ConnectionStatus.CONNECTED || !socket) return;
-    if (chatState !== ChatState.UNINITIALIZED) return;
-    
-    const urlParams = new URLSearchParams(window.location.search);
-    const resourceNumber = urlParams.get('resourceNumber');
-    
-    // Either load customer or request welcome message
-    if (resourceNumber) {
-      console.log('🔍 Initializing chat with customer data');
-      console.log('👤 Using admin status for customer load:', isAdminRef.current);
-      setChatState(ChatState.CUSTOMER_REQUESTED);
-      
-      const formattedNumber = resourceNumber.startsWith('c') ? resourceNumber : `c${resourceNumber}`;
-      const fullResourceName = `people/${formattedNumber}`;
-      
-      socket.emit('loadCustomer', {
-        resourceName: fullResourceName,
-        isAdmin: isAdminRef.current // Use current admin status value
       });
-    } else if (messages.length === 0) {
-      console.log('👋 Initializing chat with welcome message');
-      console.log('👤 Using admin status for welcome:', isAdminRef.current);
-      setChatState(ChatState.WELCOME_REQUESTED);
-      socket.emit('welcome', { isAdmin: isAdminRef.current });
-    } else {
-      // If we have messages but no other state, consider chat initialized
-      setChatState(ChatState.WELCOME_RECEIVED);
+
+      socketInstance.on('message', (message) => {
+        console.log('📩 Message received:', message);
+        setMessages((prev) => [...prev, message]);
+      });
+
+      socketInstance.on('typing', (isTyping) => {
+        setIsTyping(isTyping);
+      });
+
+      // Store socket instance
+      setSocket(socketInstance);
+
+      // Clean up on unmount
+      return () => {
+        socketInstance.disconnect();
+        setSocket(null);
+        socketInitializedRef.current = false;
+      };
+    } catch (error) {
+      console.error('🔌 Error initializing socket:', error);
+      setConnectionStatus('error');
+      socketInitializedRef.current = false;
     }
-  }, [connectionStatus, socket, chatState, messages.length]); // isAdmin removed from deps to use ref instead
-  
-  // Save messages to localStorage
+  }, []); // Empty dependency array to run only once
+
+  // Handle customer loading from URL parameters
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    if (sessionId && messages.length > 0) {
-      localStorage.setItem(`chatMessages-${sessionId}`, JSON.stringify(messages));
+    if (!socket || !isConnected || customerLoadAttemptedRef.current) return;
+
+    if (typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search);
+      const resourceName = urlParams.get('resource');
+      
+      if (resourceName) {
+        console.log(`🔍 Loading customer from URL parameter: ${resourceName}`);
+        loadCustomer(resourceName);
+        customerLoadAttemptedRef.current = true;
+      } else if (!welcomeMessageRequestedRef.current) {
+        // Only request welcome message if no resource parameter is provided
+        // and we haven't already requested it
+        console.log('🌟 Requesting welcome message after connection');
+        setTimeout(() => {
+          requestWelcomeMessage();
+          welcomeMessageRequestedRef.current = true;
+        }, 500); // Short delay to ensure socket is ready
+      }
     }
-  }, [messages, sessionId]);
-  
-  // Message sending function
-  const sendMessage = useCallback((content: string) => {
-    if (!socket || !content.trim()) return;
-    
-    const userMessage: Message = {
-      role: 'user',
+  }, [isConnected]); // Only dependency is connection status
+
+  // Methods for socket communication
+  const requestWelcomeMessage = () => {
+    if (!socket || !isConnected) {
+      console.warn('⚠️ Cannot request welcome message: Socket not connected');
+      return;
+    }
+
+    console.log('🌟 Requesting welcome message');
+    socket.emit('welcome', { isAdmin: isAdminRef.current });
+  };
+
+  const sendMessage = (content: string, msgIsAdmin = isAdminRef.current) => {
+    if (!socket || !isConnected) {
+      console.warn('⚠️ Cannot send message: Socket not connected');
+      return;
+    }
+
+    const messageObj: Message = {
+      role: 'human',
       content,
-      id: uuidv4()
+      id: uuidv4(),
     };
-    
-    setMessages(prev => [...prev, userMessage]);
-    
-    socket.emit('chat', {
-      message: content,
-      isAdmin: isAdminRef.current // Use current admin status value
-    });
-  }, [socket]);
-  
-  // Load customer profile
-  const loadCustomer = useCallback((resourceName: string) => {
-    if (!socket) return;
-    
-    console.log('🔍 Loading customer:', resourceName);
-    console.log('👤 Using admin status for loadCustomer:', isAdminRef.current);
-    setChatState(ChatState.CUSTOMER_REQUESTED);
-    
-    socket.emit('loadCustomer', {
-      resourceName,
-      isAdmin: isAdminRef.current // Use current admin status value
-    });
-  }, [socket]);
-  
-  // Clear context
-  const clearContext = useCallback(() => {
-    if (!socket) return;
-    
+
+    setMessages((prev) => [...prev, messageObj]);
+    socket.emit('chat', { message: content, isAdmin: msgIsAdmin });
+  };
+
+  const loadCustomer = (resourceName: string, loadIsAdmin = isAdminRef.current) => {
+    if (!socket || !isConnected) {
+      console.warn('⚠️ Cannot load customer: Socket not connected');
+      return;
+    }
+
+    console.log(`🔍 Loading customer: ${resourceName}`);
+    socket.emit('loadCustomer', { resourceName, isAdmin: loadIsAdmin });
+    setIsCustomerLoaded(true);
+  };
+
+  const clearContext = () => {
+    if (!socket || !isConnected) {
+      console.warn('⚠️ Cannot clear context: Socket not connected');
+      return;
+    }
+
     console.log('🧹 Clearing context');
     socket.emit('clearContext');
-  }, [socket]);
-  
-  // Reset chat
-  const resetChat = useCallback(() => {
-    if (!socket) return;
-    
-    // Reset chat state
-    setChatState(ChatState.UNINITIALIZED);
-    
-    // Clear local storage
-    if (sessionId) {
-      localStorage.removeItem(`chatMessages-${sessionId}`);
-    }
-    
-    // Reset messages
     setMessages([]);
-    
-    // Let the initialization effect handle the rest
-  }, [socket, sessionId]);
-  
-  // Derive isConnected from connection status
-  const isConnected = connectionStatus === ConnectionStatus.CONNECTED;
-  
-  return (
-    <SocketContext.Provider
-      value={{
-        socket,
-        messages,
-        setMessages,
-        isLoading,
-        isConnected,
-        sessionId,
-        sendMessage,
-        loadCustomer,
-        clearContext,
-        resetChat
-      }}
-    >
-      {children}
-    </SocketContext.Provider>
-  );
+    setIsCustomerLoaded(false);
+    customerLoadAttemptedRef.current = false;
+    welcomeMessageRequestedRef.current = false;
+  };
+
+  const value = {
+    socket,
+    messages,
+    isConnected,
+    isTyping,
+    sessionId,
+    sendMessage,
+    loadCustomer,
+    clearContext,
+    connectionStatus,
+    isCustomerLoaded,
+  };
+
+  return <SocketContext.Provider value={value}>{children}</SocketContext.Provider>;
 };
 
-// Custom hook to use the socket context
-export const useSocket = () => useContext(SocketContext); 
+export const useSocket = () => {
+  const context = useContext(SocketContext);
+  if (!context) {
+    throw new Error('useSocket must be used within a SocketProvider');
+  }
+  return context;
+}; 

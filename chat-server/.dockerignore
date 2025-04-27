@@ -12,7 +12,7 @@ coverage
 # Environment (contains sensitive data)
 .env
 .env.*
-!.env.example
+!.env.production
 
 # Files not required for production
 .editorconfig
