@@ -4,14 +4,10 @@ const { ChatPromptTemplate, MessagesPlaceholder } = require('@langchain/core/pro
 const axios = require('axios');
 
 // Import system prompts from the prompts directory
-const { createSystemPrompt: createAdminSystemPrompt } = require('./prompts/systemPrompt-admin');
-const { createSystemPrompt: createCustomerSystemPrompt } = require('./prompts/systemPrompt-customer');
+const { createAdminSystemPrompt, createCustomerSystemPrompt } = require('./prompts');
 
-// Import the tools
-const { lookupUserTool, getServicesTool, getAvailableSlotsTool, bookAppointmentTool, createContactTool, storeUserTool } = require('./tools');
-
-
-const tools = [lookupUserTool, getServicesTool, getAvailableSlotsTool, bookAppointmentTool, createContactTool, storeUserTool];
+// Import the tool factories
+const { createTools } = require('./tools');
 
 // Store executors in memory keyed by session ID
 const executors = new Map();
@@ -209,6 +205,9 @@ async function getOrCreateExecutor(sessionId, isAdmin = false) {
   
   // Use the function to create the prompt
   const prompt = createChatPrompt(systemMessage, context);
+  
+  // Create context-aware tools
+  const tools = createTools(context, sessionId);
   
   // Create the agent
   const agent = await createToolCallingAgent({

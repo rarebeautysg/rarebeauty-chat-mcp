@@ -91,13 +91,17 @@ async function getContacts() {
 }
 
 export class LookupUserTool extends StructuredTool {
-  constructor() {
+  constructor(context, sessionId) {
     super();
     this.name = "lookupUser";
     this.description = "Find a user by Singapore phone number";
     this.schema = z.object({
-      phoneNumber: z.string().describe("Singapore mobile number to lookup"),
+      phoneNumber: z.string().describe("Singapore mobile number to lookup")
     });
+    
+    // Store context and session ID
+    this.context = context;
+    this.sessionId = sessionId;
     
     // Warm the cache on initialization
     getContacts().catch(err => console.error('Failed to warm contacts cache:', err));
@@ -106,6 +110,7 @@ export class LookupUserTool extends StructuredTool {
   async _call({ phoneNumber }) {
     console.log(`🚨 LOOKUP TOOL TRIGGERED 🚨`);
     console.log(`📞 Looking up user by phone: ${phoneNumber}`);
+    console.log(`🔄 Session ID: ${this.sessionId}`);
 
     try {
       // Ensure contacts are loaded
@@ -131,6 +136,8 @@ export class LookupUserTool extends StructuredTool {
       let contact = contactsCache.find(c => c.mobile === phoneNumber);
       if (contact) {
         console.log(`✅ Found exact match: ${contact.name}`);
+        // Update context directly
+        this.updateContext(contact);
         return JSON.stringify({
           resourceName: contact.resourceName,
           name: contact.name,
@@ -146,6 +153,8 @@ export class LookupUserTool extends StructuredTool {
       
       if (contact) {
         console.log(`✅ Found normalized match: ${contact.name}`);
+        // Update context directly
+        this.updateContext(contact);
         return JSON.stringify({
           resourceName: contact.resourceName,
           name: contact.name,
@@ -162,6 +171,8 @@ export class LookupUserTool extends StructuredTool {
       
       if (contact) {
         console.log(`✅ Found last-8-digits match: ${contact.name}`);
+        // Update context directly
+        this.updateContext(contact);
         return JSON.stringify({
           resourceName: contact.resourceName,
           name: contact.name,
@@ -182,5 +193,44 @@ export class LookupUserTool extends StructuredTool {
         message: error instanceof Error ? error.message : String(error)
       });
     }
+  }
+  
+  // Helper method to update context with user information
+  updateContext(contact) {
+    if (!this.context || !this.context.memory) return;
+    
+    // Update the user_info in the context
+    this.context.memory.user_info = {
+      resourceName: contact.resourceName,
+      name: contact.name,
+      mobile: contact.mobile,
+      updatedAt: new Date().toISOString()
+    };
+    
+    // Update identity too
+    this.context.identity.user_id = contact.resourceName;
+    this.context.identity.persona = "returning_customer";
+    
+    // Track tool usage in memory
+    if (!this.context.memory.tool_usage) {
+      this.context.memory.tool_usage = {};
+    }
+    
+    if (!this.context.memory.tool_usage.lookupUser) {
+      this.context.memory.tool_usage.lookupUser = [];
+    }
+    
+    // Store the result in tool usage
+    this.context.memory.tool_usage.lookupUser.push({
+      timestamp: new Date().toISOString(),
+      params: { phoneNumber: contact.mobile },
+      result: {
+        resourceName: contact.resourceName,
+        name: contact.name,
+        mobile: contact.mobile
+      }
+    });
+    
+    console.log(`✅ Updated context with found customer: ${contact.name}, resourceName: ${contact.resourceName}`);
   }
 }

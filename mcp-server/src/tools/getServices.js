@@ -1,4 +1,4 @@
-const { Tool } = require("@langchain/core/tools");
+const { StructuredTool } = require("@langchain/core/tools");
 const axios = require('axios');
 
 // Service cache for real API
@@ -262,19 +262,40 @@ async function getServiceDuration(serviceId) {
   return service?.duration || 60; // Default to 60 minutes if service not found
 }
 
-class GetServicesTool extends Tool {
-  constructor() {
+class GetServicesTool extends StructuredTool {
+  constructor(context, sessionId) {
     super();
     this.name = "getServices";
     this.description = "Get a list of all available beauty services with prices";
+    
+    // Store context and session ID
+    this.context = context;
+    this.sessionId = sessionId;
   }
 
   async _call(args) {
-    console.log('📋 GetServices tool called', args);
+    console.log(`📋 GetServices tool called for session ${this.sessionId}`, args);
     
     try {
       // Get services
       const allServices = await getAllFormattedServices();
+      
+      // Track tool usage in memory
+      if (this.context && this.context.memory) {
+        if (!this.context.memory.tool_usage) {
+          this.context.memory.tool_usage = {};
+        }
+        
+        if (!this.context.memory.tool_usage.getServices) {
+          this.context.memory.tool_usage.getServices = [];
+        }
+        
+        // Store the request in tool usage
+        this.context.memory.tool_usage.getServices.push({
+          timestamp: new Date().toISOString(),
+          params: args || {},
+        });
+      }
       
       // Optional filtering by category
       const category = args?.category;
@@ -316,7 +337,7 @@ class GetServicesTool extends Tool {
         categories: categorizedServices
       });
     } catch (error) {
-      console.error('❌ Error in getServices tool:', error);
+      console.error(`❌ Error in getServices tool for session ${this.sessionId}:`, error);
       return JSON.stringify({ 
         success: false,
         error: "Failed to retrieve services",
@@ -326,16 +347,22 @@ class GetServicesTool extends Tool {
   }
 }
 
-// Create an instance of the tool
-const getServicesTool = new GetServicesTool();
+/**
+ * Creates a getServices tool instance with context
+ * @param {Object} context - The MCP context for the session
+ * @param {string} sessionId - The session ID
+ * @returns {Tool} - The getServices tool instance
+ */
+function createGetServicesTool(context, sessionId) {
+  return new GetServicesTool(context, sessionId);
+}
 
 // Warm the cache on module load
 getAllFormattedServices().catch(err => console.error('Failed to warm services cache:', err));
 
-// Export both the tool class and the instance
+// Export the factory function and utility functions
 module.exports = {
-  GetServicesTool,
-  getServicesTool,
+  createGetServicesTool,
   getAllFormattedServices,
   getServiceById,
   getServiceByName

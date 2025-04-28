@@ -222,7 +222,7 @@ function convertSlotsToHumanReadable(slots) {
 }
 
 class GetAvailableSlotsTool extends Tool {
-  constructor() {
+  constructor(context, sessionId) {
     super();
     this.name = "getAvailableSlots";
     this.description = "Get available appointment time slots for a specific date";
@@ -231,13 +231,43 @@ class GetAvailableSlotsTool extends Tool {
       serviceIds: z.array(z.string()).optional().describe("Optional array of service IDs to check availability for"),
       requestedTime: z.string().optional().describe("Optional specific time to check (format: 'HH:MM' or 'H:MM AM/PM')")
     });
+    
+    // Store context and session ID
+    this.context = context;
+    this.sessionId = sessionId;
   }
 
   async _call(args) {
     const { date, serviceIds = [], requestedTime } = args;
-    console.log(`🔍 Checking availability for date: ${date}, services: ${JSON.stringify(serviceIds)}, requestedTime: ${requestedTime || 'none'}`);
+    console.log(`🔍 Checking availability for date: ${date}, services: ${JSON.stringify(serviceIds)}, requestedTime: ${requestedTime || 'none'} (Session: ${this.sessionId})`);
     
     try {
+      // Track tool usage in memory
+      if (this.context && this.context.memory) {
+        if (!this.context.memory.tool_usage) {
+          this.context.memory.tool_usage = {};
+        }
+        
+        if (!this.context.memory.tool_usage.getAvailableSlots) {
+          this.context.memory.tool_usage.getAvailableSlots = [];
+        }
+        
+        // Store the request in tool usage
+        this.context.memory.tool_usage.getAvailableSlots.push({
+          timestamp: new Date().toISOString(),
+          params: { date, serviceIds, requestedTime }
+        });
+        
+        // Update context memory with preferred date and service
+        if (date) {
+          this.context.memory.preferred_date = date;
+        }
+        
+        if (serviceIds && serviceIds.length > 0) {
+          this.context.memory.last_selected_service = serviceIds[0];
+        }
+      }
+      
       // Parse the date
       let requestedDate;
       if (date.toLowerCase() === 'today') {
@@ -414,10 +444,17 @@ class GetAvailableSlotsTool extends Tool {
   }
 }
 
-// Export an instance of the tool
-const getAvailableSlotsTool = new GetAvailableSlotsTool();
+/**
+ * Creates a getAvailableSlots tool instance with context
+ * @param {Object} context - The MCP context for the session
+ * @param {string} sessionId - The session ID
+ * @returns {Tool} - The getAvailableSlots tool instance
+ */
+function createGetAvailableSlotsTool(context, sessionId) {
+  return new GetAvailableSlotsTool(context, sessionId);
+}
 
+// Just export the factory function
 module.exports = {
-  GetAvailableSlotsTool,
-  getAvailableSlotsTool
+  createGetAvailableSlotsTool
 }; 

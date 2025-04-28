@@ -64,7 +64,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
           {message.role === 'user' ? (
             <p className="text-sm sm:text-base font-normal">{message.content}</p>
           ) : (
-            <div className="text-xs sm:text-sm font-normal markdown-content">
+            <div className="text-xs sm:text-sm font-normal markdown-content markdown-body">
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 components={{
@@ -91,24 +91,22 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
                     <pre className="bg-gray-200 p-2 rounded my-2 overflow-x-auto text-xs font-mono" {...props} />
                   ),
                   table: ({ node, ...props }) => (
-                    <div className="overflow-x-auto my-3 rounded">
-                      <table className="border-collapse w-full text-xs sm:text-sm" {...props} />
-                    </div>
+                    <table {...props} />
                   ),
                   thead: ({ node, ...props }) => (
-                    <thead className="bg-gray-200" {...props} />
+                    <thead {...props} />
                   ),
                   tbody: ({ node, ...props }) => (
                     <tbody {...props} />
                   ),
                   tr: ({ node, ...props }) => (
-                    <tr className="border-b border-gray-200" {...props} />
+                    <tr {...props} />
                   ),
                   th: ({ node, ...props }) => (
-                    <th className="py-1.5 px-3 text-left font-bold" {...props} />
+                    <th {...props} />
                   ),
                   td: ({ node, ...props }) => (
-                    <td className="py-1.5 px-3" {...props} />
+                    <td {...props} />
                   ),
                   strong: ({ node, children, ...props }) => {
                     const content = String(children || '');

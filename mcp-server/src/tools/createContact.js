@@ -8,11 +8,15 @@ const CreateContactSchema = z.object({
 });
 
 export class CreateContactTool extends StructuredTool {
-  constructor() {
+  constructor(context, sessionId) {
     super();
     this.name = "createContact";
     this.description = "Create a new customer contact when their mobile number is not found in the system";
     this.schema = CreateContactSchema;
+    
+    // Store context and session ID
+    this.context = context;
+    this.sessionId = sessionId;
   }
 
   async _call(inputs) {
@@ -28,7 +32,24 @@ export class CreateContactTool extends StructuredTool {
       formattedMobile = `+${mobile}`;
     }
 
-    console.log(`📝 Creating new contact: ${first} ${last || ''} (${formattedMobile})`);
+    console.log(`📝 Creating new contact: ${first} ${last || ''} (${formattedMobile}) for session ${this.sessionId}`);
+    
+    // Track tool usage in memory
+    if (this.context && this.context.memory) {
+      if (!this.context.memory.tool_usage) {
+        this.context.memory.tool_usage = {};
+      }
+      
+      if (!this.context.memory.tool_usage.createContact) {
+        this.context.memory.tool_usage.createContact = [];
+      }
+      
+      // Store the request in tool usage
+      this.context.memory.tool_usage.createContact.push({
+        timestamp: new Date().toISOString(),
+        params: inputs
+      });
+    }
 
     try {
       // Prepare the GraphQL mutation
@@ -110,6 +131,30 @@ export class CreateContactTool extends StructuredTool {
 
       const contact = result.data.createContact;
       console.log(`✅ Contact created successfully:`, contact);
+      
+      // Update context with the new user information
+      if (this.context && this.context.memory) {
+        this.context.memory.user_info = {
+          name: contact.name,
+          mobile: contact.mobile,
+          resourceName: contact.resourceName,
+          updatedAt: new Date().toISOString()
+        };
+        
+        // Update the tool usage with the result
+        const lastIndex = this.context.memory.tool_usage.createContact.length - 1;
+        if (lastIndex >= 0) {
+          this.context.memory.tool_usage.createContact[lastIndex].result = {
+            name: contact.name,
+            mobile: contact.mobile,
+            resourceName: contact.resourceName
+          };
+        }
+        
+        // Update identity
+        this.context.identity.user_id = contact.resourceName;
+        this.context.identity.persona = "new_customer";
+      }
 
       // Create a custom response object that won't be mistaken for template variables
       // Format the JSON with unique prefixes to avoid template variable issues
@@ -119,4 +164,14 @@ export class CreateContactTool extends StructuredTool {
       return `ERROR|Message:${error.message}`;
     }
   }
+}
+
+/**
+ * Creates a createContact tool instance with context
+ * @param {Object} context - The MCP context for the session
+ * @param {string} sessionId - The session ID
+ * @returns {StructuredTool} - The createContact tool instance
+ */
+export function createCreateContactTool(context, sessionId) {
+  return new CreateContactTool(context, sessionId);
 } 

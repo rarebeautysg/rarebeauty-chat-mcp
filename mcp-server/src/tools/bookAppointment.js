@@ -16,7 +16,8 @@ const BookAppointmentSchema = z.object({
   discount: z.number().optional().describe("Discount amount"),
   toBeInformed: z.boolean().optional().describe("Whether to inform the customer"),
   deposit: z.number().optional().describe("Deposit amount"),
-  notes: z.string().optional().describe("Notes for the appointment")
+  notes: z.string().optional().describe("Notes for the appointment"),
+  sessionId: z.string().optional().describe("Session ID for the booking")
 });
 
 // Cache for public holidays
@@ -143,7 +144,7 @@ function prepareGraphQLRequest(bookingData, formattedStart) {
     discount: bookingData.discount || 0,
     toBeInformed: bookingData.toBeInformed !== undefined ? bookingData.toBeInformed : true,
     deposit: bookingData.deposit || 0,
-    force: bookingData.force || false
+    force: bookingData.force || false    
   };
   
   // Return the complete GraphQL request
@@ -174,16 +175,46 @@ function formatDisplayTime(dateObj) {
 }
 
 class BookAppointmentTool extends StructuredTool {
-  constructor() {
+  constructor(context, sessionId) {
     super();
     this.name = "bookAppointment";
     this.description = "Book appointment for one or more services at a given time. Checks availability too.";
     this.schema = BookAppointmentSchema;
+    
+    // Store context and session ID
+    this.context = context;
+    this.sessionId = sessionId;
   }
 
   async _call(inputs) {
     const { serviceIds, date, time, name, mobile, resourceName, force, duration, totalAmount, additional, discount, toBeInformed, deposit, notes } = inputs;
 
+    console.log(`🔄 Book appointment request for session: ${this.sessionId}`);
+    
+    // Track tool usage in memory
+    if (this.context && this.context.memory) {
+      if (!this.context.memory.tool_usage) {
+        this.context.memory.tool_usage = {};
+      }
+      
+      if (!this.context.memory.tool_usage.bookAppointment) {
+        this.context.memory.tool_usage.bookAppointment = [];
+      }
+      
+      // Store the request in tool usage
+      this.context.memory.tool_usage.bookAppointment.push({
+        timestamp: new Date().toISOString(),
+        params: inputs
+      });
+      
+      // Update context memory
+      if (serviceIds && serviceIds.length > 0) {
+        this.context.memory.last_selected_service = serviceIds[0];
+      }
+      if (date) this.context.memory.preferred_date = date;
+      if (time) this.context.memory.preferred_time = time;
+    }
+    
     // Check required fields
     if (!name || !mobile || !resourceName || !serviceIds) {
       console.log('❌ Missing required booking fields:', { name, mobile, resourceName, serviceIds });
@@ -211,23 +242,18 @@ class BookAppointmentTool extends StructuredTool {
 
     // Try to get the correct resourceName from context if needed
     try {
-      // Directly check context if mcpContexts is available
-      if (global.mcpContexts) {
-        for (const [sessionId, context] of global.mcpContexts.entries()) {
-          const userInfo = context.memory.user_info;
-          if (userInfo && userInfo.mobile && userInfo.mobile.replace(/\D/g, '').endsWith(mobile.replace(/\D/g, '').slice(-8))) {
-            console.log(`✅ Found matching user in context with resourceName: ${userInfo.resourceName}`);
-            // Override the resourceName
-            const correctResourceName = userInfo.resourceName;
-            console.log(`🔄 Overriding resourceName from "${resourceName}" to "${correctResourceName}"`);
-            inputs.resourceName = correctResourceName;
-            break;
-          }
+      // Check if we have user info in the current context
+      if (this.context?.memory?.user_info?.mobile && mobile) {
+        const contextUserInfo = this.context.memory.user_info;
+        const normalizedMobile = mobile.replace(/\D/g, '').slice(-8);
+        
+        if (contextUserInfo.mobile.replace(/\D/g, '').endsWith(normalizedMobile)) {
+          console.log(`✅ Found matching user with resourceName: ${contextUserInfo.resourceName}`);
+          inputs.resourceName = contextUserInfo.resourceName;
         }
       }
     } catch (error) {
       console.error('⚠️ Error when trying to fix resourceName:', error);
-      // Continue with the provided resourceName
     }
 
     console.log('📅 Booking appointment with inputs:', inputs);
@@ -374,8 +400,7 @@ class BookAppointmentTool extends StructuredTool {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': authToken,
-          'X-Api-Key': process.env.SOHO_API_KEY || ''
+          'Authorization': authToken
         },
         body: JSON.stringify(graphqlRequest)
       });
@@ -446,6 +471,17 @@ class BookAppointmentTool extends StructuredTool {
   }
 }
 
+/**
+ * Creates a bookAppointment tool instance with context
+ * @param {Object} context - The MCP context for the session
+ * @param {string} sessionId - The session ID
+ * @returns {StructuredTool} - The bookAppointment tool instance
+ */
+function createBookAppointmentTool(context, sessionId) {
+  return new BookAppointmentTool(context, sessionId);
+}
+
 module.exports = {
-  BookAppointmentTool
+  BookAppointmentTool,
+  createBookAppointmentTool
 }; 

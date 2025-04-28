@@ -28,27 +28,36 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
-/* Markdown table styles */
+/* Override GitHub markdown CSS to fit our styling */
+.markdown-body {
+  background-color: transparent !important;
+  font-family: inherit !important;
+}
+
+/* Apply GitHub markdown styling to our content */
+.markdown-content {
+  display: block;
+}
+
+.markdown-content.markdown-body {
+  font-size: inherit;
+}
+
+/* Additional table customizations for our specific needs */
 .markdown-content table {
-  width: 100%;
-  border-collapse: collapse;
   margin: 1em 0;
-  font-size: 0.9em;
+  display: table;
+  border-radius: 6px;
+  overflow: hidden;
+  width: 100%;
 }
 
-.markdown-content thead {
-  background-color: #f8f8f8;
-}
-
-.markdown-content th, 
-.markdown-content td {
-  padding: 0.5em;
-  border: 1px solid #ddd;
-  text-align: left;
-}
-
-.markdown-content th {
-  font-weight: bold;
+@media (max-width: 640px) {
+  .markdown-content table {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
 }
 
 /* Add a responsive viewport meta tag to ensure proper scaling on mobile devices */

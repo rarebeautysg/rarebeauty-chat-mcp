@@ -416,43 +416,27 @@ ${data.message}`;
       
       console.log(`🔧 Tool request for session ${sessionId}: ${tool}`);
       
-      // Update MCP context with tool usage
-      if (mcpContexts.has(sessionId)) {
-        const context = mcpContexts.get(sessionId);
-        
-        // Track tool usage in memory
-        if (!context.memory.tool_usage) {
-          context.memory.tool_usage = {};
-        }
-        
-        if (!context.memory.tool_usage[tool]) {
-          context.memory.tool_usage[tool] = [];
-        }
-        
-        // Store tool parameters and timestamp
-        context.memory.tool_usage[tool].push({
-          timestamp: new Date().toISOString(),
-          params: params
-        });
-        
-        // Update memory based on tool and parameters
-        if (tool === 'lookupUser' && params.mobile) {
-          context.memory.last_mobile_lookup = params.mobile;
-        } else if (tool === 'getAvailableSlots' && params.date) {
-          context.memory.preferred_date = params.date;
-          if (params.serviceIds && params.serviceIds.length > 0) {
-            context.memory.last_selected_service = params.serviceIds[0];
-          }
-        } else if (tool === 'bookAppointment') {
-          if (params.serviceIds && params.serviceIds.length > 0) {
-            context.memory.last_selected_service = params.serviceIds[0];
-          }
-          if (params.date) context.memory.preferred_date = params.date;
-          if (params.time) context.memory.preferred_time = params.time;
-        }
-        
-        mcpContexts.set(sessionId, context);
+      // Get the MCP context for this session
+      if (!mcpContexts.has(sessionId)) {
+        mcpContexts.set(sessionId, createNewMCPContext(sessionId));
       }
+      const context = mcpContexts.get(sessionId);
+      
+      // Log the tool request for this session
+      if (!context.memory.tool_usage) {
+        context.memory.tool_usage = {};
+      }
+      
+      // Initialize tool usage array if it doesn't exist
+      if (!context.memory.tool_usage[tool]) {
+        context.memory.tool_usage[tool] = [];
+      }
+      
+      // Record this usage with timestamp and parameters
+      context.memory.tool_usage[tool].push({
+        timestamp: new Date().toISOString(),
+        params
+      });
       
       // Call tools API
       const toolsApiUrl = `${process.env.API_URL}/api/tools`;
@@ -462,64 +446,51 @@ ${data.message}`;
         sessionId
       });
       
-      // **IMPORTANT CHANGE**: Handle lookupUser result to update customer context
-      if (tool === 'lookupUser') {
-        try {
-          const resultData = JSON.parse(toolResponse.data.result);
-          
-          // If lookupUser found a customer (has resourceName)
-          if (resultData && resultData.resourceName && resultData.name && resultData.mobile) {
-            console.log(`✅ Customer found by lookupUser: ${resultData.name} (${resultData.resourceName})`);
-            
-            // Make sure we have a context
-            if (!mcpContexts.has(sessionId)) {
-              mcpContexts.set(sessionId, createNewMCPContext(sessionId, false));
-            }
-            
-            // Update the user_info in the context
-            const context = mcpContexts.get(sessionId);
-            context.memory.user_info = {
-              resourceName: resultData.resourceName,
-              name: resultData.name,
-              mobile: resultData.mobile,
-              updatedAt: new Date().toISOString()
-            };
-            
-            // Update identity too
-            context.identity.user_id = resultData.resourceName;
-            context.identity.persona = "returning_customer";
-            
-            // STORE THE TOOL RESULT IN THE TOOL USAGE
-            if (!context.memory.tool_usage.lookupUser[context.memory.tool_usage.lookupUser.length - 1].result) {
-              context.memory.tool_usage.lookupUser[context.memory.tool_usage.lookupUser.length - 1].result = resultData;
-            }
-            
-            console.log(`✅ Updated MCP context with found customer: ${resultData.name}, resourceName: ${resultData.resourceName}`);
-            
-            mcpContexts.set(sessionId, context);
-            
-            // Force recreation of executor with updated context
-            if (executors.has(sessionId)) {
-              executors.delete(sessionId);
-              console.log('🔄 Removed existing executor to recreate with updated customer context');
-            }
-            if (adminExecutors.has(sessionId)) {
-              adminExecutors.delete(sessionId);
-              console.log('🔄 Removed existing admin executor to recreate with updated customer context');
-            }
-          }
-        } catch (e) {
-          // Parsing error or invalid result
-          console.log('📝 LookupUser did not return a valid customer result');
+      const resultData = toolResponse.data.result;
+      
+      // For lookupUser tool, update the user context if a customer is found
+      if (tool === 'lookupUser' && resultData && resultData.resourceName) {
+        // Update identity
+        context.identity.user_id = resultData.resourceName;
+        context.identity.persona = "returning_customer";
+        
+        // Update user info in memory if not already there
+        if (!context.memory.user_info) {
+          context.memory.user_info = {
+            resourceName: resultData.resourceName,
+            name: resultData.name,
+            mobile: resultData.mobile,
+            updatedAt: new Date().toISOString()
+          };
+        }
+        
+        // Store the result in the last tool usage entry
+        const lastToolUsage = context.memory.tool_usage[tool][context.memory.tool_usage[tool].length - 1];
+        if (lastToolUsage && !lastToolUsage.result) {
+          lastToolUsage.result = {
+            resourceName: resultData.resourceName,
+            name: resultData.name,
+            mobile: resultData.mobile
+          };
         }
       }
       
-      // Send back the result
+      // Update MCP context
+      mcpContexts.set(sessionId, context);
+      
+      // Send back the result to the client
       socket.emit('toolResult', {
         success: true,
         tool,
-        result: toolResponse.data.result
+        result: resultData
       });
+      
+      // Force recreation of executor on next use to pick up context changes
+      if (executors.has(sessionId)) {
+        // We don't delete the executor, but on next getOrCreateExecutor call,
+        // it will check if context has changed significantly and rebuild if needed
+        console.log(`🔄 Context may have changed for session ${sessionId}, executor will rebuild if needed`);
+      }
     } catch (error) {
       console.error('❌ Error using tool:', error);
       socket.emit('toolResult', {
@@ -535,6 +506,74 @@ ${data.message}`;
     console.log(`🔌 Socket disconnected: ${socket.id}`);
     sessionSockets.delete(sessionId);
   });
+});
+
+// AI Tools endpoint for external tools access
+app.post('/api/tools', async (req, res) => {
+  try {
+    const { tool, params, sessionId } = req.body;
+    
+    if (!tool) {
+      return res.status(400).json({ success: false, message: 'No tool specified' });
+    }
+    
+    console.log(`🔧 Tool request: ${tool} for session ${sessionId}`);
+    console.log(`🔧 Tool parameters:`, params);
+    
+    // Execute the tool directly since we have tools integrated in this server
+    try {
+      // Get or create context for this session
+      if (!mcpContexts.has(sessionId)) {
+        const isAdmin = req.body.isAdmin === true;
+        mcpContexts.set(sessionId, createNewMCPContext(sessionId, isAdmin));
+      }
+      
+      const context = mcpContexts.get(sessionId);
+      const isAdmin = context.identity.is_admin;
+      
+      // Create context-aware tools for this request
+      const { createTools } = require('./src/tools');
+      const tools = createTools(context, sessionId);
+      
+      // Find the requested tool
+      const requestedTool = tools.find(t => t.name === tool);
+      
+      if (!requestedTool) {
+        return res.status(404).json({
+          success: false,
+          message: `Tool '${tool}' not found`
+        });
+      }
+      
+      // Call the tool with the provided parameters
+      const result = await requestedTool._call(params);
+      
+      // Store the result for this session and tool (redundant but kept for backward compatibility)
+      if (!toolResults.has(sessionId)) {
+        toolResults.set(sessionId, new Map());
+      }
+      toolResults.get(sessionId).set(tool, result);
+      
+      return res.status(200).json({
+        success: true,
+        result
+      });
+    } catch (toolError) {
+      console.error(`❌ Error executing tool ${tool}:`, toolError);
+      return res.status(500).json({
+        success: false,
+        message: `Error executing tool ${tool}`,
+        error: toolError.message
+      });
+    }
+  } catch (error) {
+    console.error('❌ Error in tools API:', error);
+    return res.status(500).json({ 
+      success: false, 
+      message: 'Error calling tool',
+      error: error.message
+    });
+  }
 });
 
 // Start the server
