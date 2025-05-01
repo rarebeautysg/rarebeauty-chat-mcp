@@ -125,7 +125,7 @@ function createChatPrompt(systemMessage, context) {
     [
       ["system", systemMessage],
       new MessagesPlaceholder("chat_history"),
-      ["human", "{input}"],
+      ["user", "{input}"],
       new MessagesPlaceholder("agent_scratchpad"),
     ],
     {

@@ -114,7 +114,7 @@ export class LookupUserTool extends StructuredTool {
 
     try {
       // Ensure contacts are loaded
-      await getContacts();
+      // await getContacts();
       
       // If cache is still empty after trying to load, return an error
       if (contactsCache.length === 0) {

@@ -53,7 +53,7 @@ mkdir -p "chat-server/src/types"
 # Create a minimal socket types file
 cat > "chat-server/src/types/socket.ts" << EOL
 export interface Message {
-  role: 'human' | 'assistant';
+  role: 'user' | 'assistant';
   content: string;
   id: string;
 }

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { MessageBubble } from './MessageBubble';
-import { ChatInput } from './ChatInput';
+import ChatInput from './ChatInput';
 
 // Define Message type here directly instead of importing to avoid circular dependency
 export interface Message {

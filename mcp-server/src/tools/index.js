@@ -1,5 +1,6 @@
 // Import tool modules
-const getServices = require('./getServices');
+const listServices = require('./listServices');
+const getServiceInfo = require('./getServiceInfo');
 const getAvailableSlots = require('./getAvailableSlots');
 const bookAppointment = require('./bookAppointment');
 const lookupUser = require('./lookupUser');
@@ -57,15 +58,26 @@ function createTools(context, sessionId) {
     console.error('❌ Error creating bookAppointment tool:', error);
   }
   
-  // getServices tool
+  // listServices tool
   try {
-    if (getServices.createGetServicesTool) {
-      tools.push(getServices.createGetServicesTool(context, sessionId));
+    if (listServices.ListServicesTool) {
+      tools.push(new listServices.ListServicesTool(context, sessionId));
     } else {
-      console.warn('⚠️ GetServicesTool could not be created with context');
+      console.warn('⚠️ ListServicesTool could not be created with context');
     }
   } catch (error) {
-    console.error('❌ Error creating getServices tool:', error);
+    console.error('❌ Error creating listServices tool:', error);
+  }
+  
+  // getServiceInfo tool
+  try {
+    if (getServiceInfo.GetServiceInfoTool) {
+      tools.push(new getServiceInfo.GetServiceInfoTool(context, sessionId));
+    } else {
+      console.warn('⚠️ GetServiceInfoTool could not be created with context');
+    }
+  } catch (error) {
+    console.error('❌ Error creating getServiceInfo tool:', error);
   }
   
   // getAvailableSlots tool

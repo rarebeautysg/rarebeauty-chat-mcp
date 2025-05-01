@@ -18,9 +18,6 @@ console.log(`🔑 Auth token loaded:`, process.env.SOHO_AUTH_TOKEN ? 'Yes' : 'No
 // Import LLM integration
 const { executors, adminExecutors, toolResults, getOrCreateExecutor } = require('./src/chat-utils');
 
-// Import the tools functions after environment variables are loaded
-const { getAllFormattedServices, getServiceById } = require('./src/tools/getServices');
-
 const app = express();
 const server = http.createServer(app);
 
@@ -249,7 +246,7 @@ io.on('connection', (socket) => {
       }
       
       // Add user message to history
-      context.history.push({ role: 'human', content: data.message });
+      context.history.push({ role: 'user', content: data.message });
       mcpContexts.set(sessionId, context);
       
       // Infer goals from message content (simple heuristics)
@@ -284,7 +281,7 @@ ${data.message}`;
         // Convert history to the format expected by the executor
         const formattedHistory = context.history.map(msg => {
           return {
-            role: msg.role === 'human' ? 'human' : 'assistant',
+            role: msg.role,
             content: msg.content
           };
         }).slice(-10); // Only include the last 10 messages

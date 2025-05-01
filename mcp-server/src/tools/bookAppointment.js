@@ -1,6 +1,6 @@
 const { StructuredTool } = require("@langchain/core/tools");
 const { z } = require("zod");
-const { getAllFormattedServices, getServiceDuration } = require("./getServices");
+const { getAllFormattedServices, getServiceDuration } = require('./listServices');
 
 const BookAppointmentSchema = z.object({
   serviceIds: z.array(z.string()),
