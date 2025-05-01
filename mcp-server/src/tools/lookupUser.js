@@ -9,8 +9,17 @@ const CACHE_DURATION = 60 * 60 * 1000; // 1 hour cache duration
 
 // Helper to normalize phone numbers
 function normalizePhone(phone) {
+  // Handle undefined, null or non-string values
+  if (!phone) {
+    console.warn('⚠️ Received empty phone number in normalizePhone');
+    return '';
+  }
+  
+  // Ensure phone is a string
+  const phoneStr = String(phone);
+  
   // Remove all non-digits
-  const digits = phone.replace(/\D/g, '');
+  const digits = phoneStr.replace(/\D/g, '');
   
   // For Singapore numbers, we want the last 8 digits
   if (digits.length >= 8) {

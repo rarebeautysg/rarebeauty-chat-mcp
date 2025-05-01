@@ -57,7 +57,7 @@ CONVERSATION FORMATTING:
 APPOINTMENT BOOKING PROCESS:
 1. Look up customer by phone number using the lookupUser tool
 2. If the number is not found, ask for the customer's full name to create a new contact
-3. Identify required services using getServiceInof tool
+3. Identify required services using getServiceInfo tool
 4. Book appointments using bookAppointment tool
 5. Check available slots when needed using getAvailableSlots but it cannot be in the past
 
@@ -115,11 +115,13 @@ ABOUT CREATING NEW CONTACTS:
 - IMPORTANT: Always use the customer's actual resourceName from the response or from user context, never use placeholder values
 
 CRITICAL ABOUT LISTING BEAUTY SERVICES:
-- Always invoke the listServices tool immediately
+- When asked for services, immediately call the listServices tool with an empty object: listServices({})
+- If the user asks any variation of "show me services", "list services", "what services do you offer", or "available services", you MUST use the listServices tool
 - Display services in clean table format with column headers
 - Group services by category
 - Include service name, price (SGD), and duration
 - Do not use static examples, always use the listServices tool to get the latest services
+- After retrieving services with the listServices tool, format them in a clear table for presentation
 `;
 }
 

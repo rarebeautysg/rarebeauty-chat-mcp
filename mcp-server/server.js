@@ -79,7 +79,7 @@ function createNewMCPContext(sessionId, isAdmin = false) {
     },
     goals: [],
     instructions: isAdmin 
-      ? "Help admin manage customer appointments, lookup customers, and add new contacts."
+      ? "Help admin manage customer appointments, lookup customers, show services and add new contacts."
       : "Help customer book appointments and learn about services.",
     memory: {
       user_info: null,
@@ -88,8 +88,8 @@ function createNewMCPContext(sessionId, isAdmin = false) {
       preferred_time: null
     },
     tools: isAdmin
-      ? ["lookupUser", "createContact", "getServices", "getAvailableSlots", "bookAppointment", "storeUser"] 
-      : ["lookupUser", "getServices", "getAvailableSlots", "bookAppointment", "storeUser"],
+      ? ["lookupUser", "createContact", "listServices", "getServiceInfo", "getAvailableSlots", "bookAppointment", "storeUser"] 
+      : ["lookupUser", "listServices", "getServiceInfo", "getAvailableSlots", "bookAppointment", "storeUser"],
     history: []
   };
 }
@@ -241,8 +241,8 @@ io.on('connection', (socket) => {
         context.identity.is_admin = data.isAdmin;
         context.identity.persona = data.isAdmin ? "admin" : "customer";
         context.tools = data.isAdmin
-          ? ["lookupUser", "createContact", "getServices", "getAvailableSlots", "bookAppointment", "storeUser"] 
-          : ["lookupUser", "getServices", "getAvailableSlots", "bookAppointment", "storeUser"];
+          ? ["lookupUser", "createContact", "listServices", "getServiceInfo", "getAvailableSlots", "bookAppointment", "storeUser"] 
+          : ["lookupUser", "listServices", "getServiceInfo", "getAvailableSlots", "bookAppointment", "storeUser"];
       }
       
       // Add user message to history
@@ -584,4 +584,4 @@ Object.keys(process.env).sort().forEach(key => {
 
 server.listen(PORT, () => {
   console.log(`🚀 MCP Server running on port ${PORT}`);
-}); 
+});

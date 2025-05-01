@@ -1,6 +1,4 @@
 const { ChatOpenAI } = require('@langchain/openai');
-const { AgentExecutor, createToolCallingAgent } = require('langchain/agents');
-const { ChatPromptTemplate, MessagesPlaceholder } = require('@langchain/core/prompts');
 const axios = require('axios');
 
 // Import system prompts from the prompts directory
@@ -13,6 +11,7 @@ const { createTools } = require('./tools');
 const executors = new Map();
 const adminExecutors = new Map(); // Separate store for admin executors
 const toolResults = new Map();
+const mcpContexts = new Map(); // Store MCP contexts by session ID
 
 // Cache for public holidays
 let publicHolidaysCache = null;
@@ -104,38 +103,19 @@ async function getServerDate() {
   };
 }
 
-// Add a utility function to escape JSON strings in tool outputs
-function escapeJsonForTemplate(jsonStr) {
-  if (!jsonStr || typeof jsonStr !== 'string') return jsonStr;
-
-  // Check if it's a JSON string
-  try {
-    const parsedJson = JSON.parse(jsonStr);
-    // If it parsed successfully, return a sanitized version
-    return `Tool result: ${JSON.stringify(parsedJson).replace(/[{}"]/g, '').replace(/:/g, ' = ').replace(/,/g, ', ')}`;
-  } catch (e) {
-    // Not JSON, return as is
-    return jsonStr;
-  }
-}
-
-// Function to create a chat prompt with memory
-function createChatPrompt(systemMessage, context) {
-  return ChatPromptTemplate.fromMessages(
-    [
-      ["system", systemMessage],
-      new MessagesPlaceholder("chat_history"),
-      ["user", "{input}"],
-      new MessagesPlaceholder("agent_scratchpad"),
-    ],
-    {
-      // Define partial variables to inject memory values
-      partialVariables: {
-        // Include memory information as serialized JSON for LLM to reference
-        memory: context.memory ? JSON.stringify(context.memory) : "{}"
-      }
+// Function to create a new MCP context
+function createNewMCPContext(sessionId, isAdmin = false) {
+  return {
+    sessionId,
+    memory: {
+      tool_usage: {}
+    },
+    identity: {
+      role: isAdmin ? "admin" : "customer",
+      persona: isAdmin ? "admin" : "new_customer",
+      user_id: null
     }
-  );
+  };
 }
 
 // Function to get or create an executor for a session
@@ -159,39 +139,10 @@ async function getOrCreateExecutor(sessionId, isAdmin = false) {
     };
   }
   
-  // Track if executor needs to be rebuilt due to context changes
-  let needsRebuild = false;
-  
-  // If the executor exists, check if significant context has changed
+  // Check if executor exists and is still valid
   if (executorMap.has(sessionId)) {
     const executor = executorMap.get(sessionId);
-    
-    // Check for significant context changes that would require rebuilding
-    if (executor._lastContextSnapshot) {
-      const lastMemory = executor._lastContextSnapshot.memory || {};
-      const currentMemory = context.memory || {};
-      
-      // Check for changes in key memory fields
-      if (
-        JSON.stringify(lastMemory.user_info) !== JSON.stringify(currentMemory.user_info) ||
-        lastMemory.last_selected_service !== currentMemory.last_selected_service ||
-        lastMemory.preferred_date !== currentMemory.preferred_date ||
-        lastMemory.preferred_time !== currentMemory.preferred_time
-      ) {
-        console.log(`🔄 Context changed significantly for session ${sessionId}, rebuilding executor`);
-        needsRebuild = true;
-      }
-    } else {
-      // No snapshot exists, so create one
-      executor._lastContextSnapshot = JSON.parse(JSON.stringify(context));
-    }
-    
-    // If no rebuild needed, return the existing executor
-    if (!needsRebuild) {
-      return executor;
-    }
-    
-    // Otherwise continue to rebuild below
+    return executor;
   }
   
   // Get the current date information
@@ -203,33 +154,200 @@ async function getOrCreateExecutor(sessionId, isAdmin = false) {
     ? createAdminSystemPrompt(context, dateInfo)
     : createCustomerSystemPrompt(context, dateInfo);
   
-  // Use the function to create the prompt
-  const prompt = createChatPrompt(systemMessage, context);
-  
   // Create context-aware tools
   const tools = createTools(context, sessionId);
+  console.log(`Creating agent for session ${sessionId} with ${tools.length} tools`);
   
-  // Create the agent
-  const agent = await createToolCallingAgent({
-    llm: new ChatOpenAI({
-      modelName: "gpt-4o",
-      temperature: 0,
-    }),
-    tools,
-    prompt,
+  // Create the LLM
+  const llm = new ChatOpenAI({
+    modelName: "gpt-4o",
+    temperature: 0,
   });
   
-  // Create the executor
-  const executor = new AgentExecutor({
-    agent,
-    tools,
-    returnIntermediateSteps: false,
-    maxIterations: 10,
-    handleParsingErrors: true,
-  });
-  
-  // Store context snapshot to track changes
-  executor._lastContextSnapshot = JSON.parse(JSON.stringify(context));
+  // Create a simplified executor
+  const executor = {
+    async invoke({ input, chat_history = [] }) {
+      console.log(`Executing agent for session ${sessionId} with input: "${input.substring(0, 50)}${input.length > 50 ? '...' : ''}"`);
+      
+      try {
+        // Prepare messages
+        const messages = [
+          {
+            role: "system",
+            content: systemMessage + "\n\nContext Memory: " + JSON.stringify(context.memory || {}, null, 2)
+          }
+        ];
+        
+        // Add chat history if available
+        if (chat_history && chat_history.length > 0) {
+          const history = chat_history.slice(-6); // Limit to last 6 messages
+          history.forEach(msg => {
+            messages.push({
+              role: msg.role === 'user' ? 'user' : 'assistant',
+              content: msg.content
+            });
+          });
+        }
+        
+        // Add the current user input
+        messages.push({
+          role: "user",
+          content: input
+        });
+        
+        // Call the LLM with tools configuration
+        const result = await llm.bind({
+          tools: tools.map(tool => {
+            // Ensure proper schema format for each tool
+            let parameters = { type: 'object', properties: {}, required: [] };
+            
+            if (tool.name === 'lookupUser') {
+              // Explicitly define the lookupUser schema
+              parameters = {
+                type: 'object',
+                properties: {
+                  phoneNumber: { type: 'string', description: 'Singapore mobile number to lookup' }
+                },
+                required: ['phoneNumber']
+              };
+            } 
+            else if (tool.schema && tool.schema.shape) {
+              // Handle Zod schema conversion
+              parameters = { type: 'object', properties: {}, required: [] };
+              
+              try {
+                // Convert schema.shape to JSON Schema properties
+                for (const [key, value] of Object.entries(tool.schema.shape)) {
+                  parameters.properties[key] = {
+                    type: value._def.typeName === 'ZodNumber' ? 'number' : 
+                          value._def.typeName === 'ZodBoolean' ? 'boolean' : 'string',
+                    description: value.description || `Parameter ${key}`
+                  };
+                  
+                  // Add to required list if not optional
+                  if (!value.isOptional()) {
+                    parameters.required.push(key);
+                  }
+                }
+              } catch (e) {
+                console.warn(`Error converting schema for ${tool.name}:`, e.message);
+              }
+            }
+            
+            return {
+              type: 'function',
+              function: {
+                name: tool.name,
+                description: tool.description || `Tool: ${tool.name}`,
+                parameters
+              }
+            };
+          }),
+          tool_choice: "auto"
+        }).invoke(messages);
+        
+        // Process the result
+        if (!result.tool_calls || result.tool_calls.length === 0) {
+          // No tool calls, just return the content
+          return { output: result.content };
+        }
+        
+        console.log(`LLM wants to call ${result.tool_calls.length} tools`);
+        
+        // Execute tool calls
+        const toolResponses = [];
+        for (const toolCall of result.tool_calls) {
+          const toolName = toolCall.name;
+          const tool = tools.find(t => t.name === toolName);
+          
+          if (!tool) {
+            console.warn(`Tool ${toolName} not found`);
+            toolResponses.push({
+              tool_call_id: toolCall.id,
+              role: "tool",
+              name: toolName,
+              content: JSON.stringify({ error: `Tool ${toolName} not found` })
+            });
+            continue;
+          }
+          
+          // Parse tool arguments
+          let args = {};
+          try {
+            if (toolCall.args) {
+              if (typeof toolCall.args === 'string') {
+                args = JSON.parse(toolCall.args);
+              } else if (typeof toolCall.args === 'object') {
+                args = toolCall.args;
+              }
+            }
+            
+            // Special handling for lookupUser tool
+            if (toolName === 'lookupUser' && !args.phoneNumber) {
+              // Try to extract phone number from raw args
+              if (typeof toolCall.args === 'string') {
+                const phoneMatch = toolCall.args.match(/(\d{8,})/);
+                if (phoneMatch) {
+                  args.phoneNumber = phoneMatch[1];
+                  console.log(`Extracted phoneNumber ${args.phoneNumber} from string args`);
+                }
+              }
+              
+              // Check if phone number is in another property
+              if (!args.phoneNumber) {
+                for (const [key, value] of Object.entries(args)) {
+                  if (typeof value === 'string' && /^\d{8,}$/.test(value.replace(/\D/g, ''))) {
+                    args.phoneNumber = value;
+                    console.log(`Using ${key}=${value} as phoneNumber`);
+                    break;
+                  }
+                }
+              }
+            }
+            
+            console.log(`Calling tool ${toolName} with args:`, args);
+          } catch (e) {
+            console.warn(`Error parsing args for ${toolName}:`, e.message);
+            args = {};
+          }
+          
+          // Call the tool
+          try {
+            const toolResult = await tool._call(args);
+            toolResponses.push({
+              tool_call_id: toolCall.id,
+              role: "tool",
+              name: toolName,
+              content: typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult)
+            });
+          } catch (error) {
+            console.error(`Error executing tool ${toolName}:`, error);
+            toolResponses.push({
+              tool_call_id: toolCall.id,
+              role: "tool",
+              name: toolName,
+              content: JSON.stringify({ error: error.message || 'Unknown error' })
+            });
+          }
+        }
+        
+        // Add tool responses to messages
+        const finalMessages = [...messages, result, ...toolResponses];
+        
+        // Get final response
+        const finalResult = await llm.invoke(finalMessages);
+        return { output: finalResult.content };
+      } catch (error) {
+        console.error(`Error in chat execution:`, error);
+        return { 
+          output: "I'm having trouble processing your request. Please try again." 
+        };
+      }
+    },
+    
+    // Store context snapshot
+    _lastContextSnapshot: JSON.parse(JSON.stringify(context))
+  };
   
   // Store it in the map
   executorMap.set(sessionId, executor);
@@ -241,6 +359,7 @@ module.exports = {
   executors,
   adminExecutors,
   toolResults,
+  mcpContexts,
   getOrCreateExecutor,
-  escapeJsonForTemplate
+  createNewMCPContext
 };
