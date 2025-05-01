@@ -176,7 +176,7 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({
     }
 
     const messageObj: Message = {
-      role: 'human',
+      role: 'user',
       content,
       id: uuidv4(),
     };

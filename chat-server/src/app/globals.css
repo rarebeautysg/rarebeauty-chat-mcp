@@ -43,15 +43,39 @@ body {
   font-size: inherit;
 }
 
-/* Additional table customizations for our specific needs */
+/* Enhanced table styles */
 .markdown-content table {
-  margin: 1em 0;
-  display: table;
-  border-radius: 6px;
-  overflow: hidden;
-  width: 100%;
+  width: 100% !important;
+  border-collapse: collapse !important;
+  margin: 1em 0 !important;
+  font-size: 0.95em !important;
 }
 
+.markdown-content thead {
+  background-color: #f3f4f6 !important;
+}
+
+.markdown-content th, 
+.markdown-content td {
+  padding: 0.75em 1em !important;
+  text-align: left !important;
+}
+
+.markdown-content th {
+  font-weight: 600 !important;
+  color: #4b5563 !important;
+  border-bottom: 2px solid #e5e7eb !important;
+}
+
+.markdown-content tr:nth-child(even) {
+  background-color: #f9fafb;
+}
+
+.markdown-content tr:hover {
+  background-color: #f3f4f6;
+}
+
+/* For proper table rendering on mobile */
 @media (max-width: 640px) {
   .markdown-content table {
     display: block;

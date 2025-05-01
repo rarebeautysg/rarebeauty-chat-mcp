@@ -2,7 +2,16 @@ import React from 'react';
 import Image from 'next/image';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
 import { Message } from './ChatInterface';
+import { 
+  TableRenderer, 
+  TableHead, 
+  TableBody, 
+  TableRow, 
+  TableHeader, 
+  TableCell 
+} from './TableRenderer';
 
 interface MessageBubbleProps {
   message: Message;
@@ -66,7 +75,8 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
           ) : (
             <div className="text-xs sm:text-sm font-normal markdown-content markdown-body">
               <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
+                remarkPlugins={[[remarkGfm, { tableCellPadding: true, tablePipeAlign: true }]]}
+                rehypePlugins={[rehypeRaw]}
                 components={{
                   p: renderParagraphs,
                   h1: ({ node, ...props }) => (
@@ -91,22 +101,22 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
                     <pre className="bg-gray-200 p-2 rounded my-2 overflow-x-auto text-xs font-mono" {...props} />
                   ),
                   table: ({ node, ...props }) => (
-                    <table {...props} />
+                    <TableRenderer {...props} />
                   ),
                   thead: ({ node, ...props }) => (
-                    <thead {...props} />
+                    <TableHead {...props} />
                   ),
                   tbody: ({ node, ...props }) => (
-                    <tbody {...props} />
+                    <TableBody {...props} />
                   ),
                   tr: ({ node, ...props }) => (
-                    <tr {...props} />
+                    <TableRow {...props} />
                   ),
                   th: ({ node, ...props }) => (
-                    <th {...props} />
+                    <TableHeader {...props} />
                   ),
                   td: ({ node, ...props }) => (
-                    <td {...props} />
+                    <TableCell {...props} />
                   ),
                   strong: ({ node, children, ...props }) => {
                     const content = String(children || '');
@@ -132,14 +142,6 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
           <span className="text-[10px] sm:text-xs text-gray-500">
             {message.role === 'user' ? 'You' : 'Rare Beauty'}
           </span>
-          
-          {isLastMessage && (
-            <div className="flex items-center gap-0.5 sm:gap-1 ml-1 sm:ml-2">
-              <div className="w-1 h-1 sm:w-1.5 sm:h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
-              <div className="w-1 h-1 sm:w-1.5 sm:h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
-              <div className="w-1 h-1 sm:w-1.5 sm:h-1.5 bg-gray-400 rounded-full animate-bounce"></div>
-            </div>
-          )}
         </div>
       </div>
     </div>

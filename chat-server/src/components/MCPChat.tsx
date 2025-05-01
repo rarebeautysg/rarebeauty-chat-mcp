@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { useSocket } from '@/context/SocketContext';
 import { useSearchParams } from 'next/navigation';
 import ChatInput from './ChatInput';
+import { MessageBubble } from './MessageBubble';
 
 interface MCPChatProps {
   isAdmin?: boolean;
@@ -54,17 +55,13 @@ const MCPChat: React.FC<MCPChatProps> = ({ isAdmin = false }) => {
           </div>
         ) : (
           <div className="space-y-4">
-            {messages.map((message) => (
-              <div
+            {messages.map((message, idx) => (
+              <MessageBubble
                 key={message.id}
-                className={`max-w-3xl ${
-                  message.role === 'human'
-                    ? 'ml-auto bg-blue-100 text-blue-900'
-                    : 'mr-auto bg-gray-100 text-gray-900'
-                } rounded-lg p-3 shadow`}
-              >
-                <div className="whitespace-pre-wrap">{message.content}</div>
-              </div>
+                message={message}
+                isFirstMessage={idx === 0}
+                isLastMessage={idx === messages.length - 1}
+              />
             ))}
             {isTyping && (
               <div className="max-w-3xl mr-auto bg-gray-100 text-gray-900 rounded-lg p-3 animate-pulse shadow">
