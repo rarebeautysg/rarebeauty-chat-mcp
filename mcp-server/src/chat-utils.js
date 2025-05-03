@@ -323,6 +323,64 @@ async function getOrCreateExecutor(sessionId, isAdmin = false) {
               name: toolName,
               content: typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult)
             });
+
+            // Store appointments in context after lookupUser
+            if (toolName === 'lookupUser' && !toolResult.includes('"error"')) {
+              try {
+                const lookupResult = typeof toolResult === 'string' ? JSON.parse(toolResult) : toolResult;
+                const resourceName = lookupResult.resourceName;
+                const customerName = lookupResult.name;
+                
+                if (resourceName) {
+                  console.log(`🔄 Fetching appointments for resourceName: ${resourceName}`);
+                  
+                  // Find the getCustomerAppointments tool
+                  const appointmentsTool = tools.find(t => t.name === 'getCustomerAppointments');
+                  
+                  if (appointmentsTool) {
+                    // Call the tool to get appointments, but don't add to toolResponses
+                    const appointmentsResult = await appointmentsTool._call({ resourceName, limit: 5 });
+                    
+                    // Parse the appointments
+                    const appointmentsData = typeof appointmentsResult === 'string' 
+                      ? JSON.parse(appointmentsResult) 
+                      : appointmentsResult;
+                    
+                    // Store the appointments in the context for future use
+                    if (!context.memory) context.memory = {};
+                    context.memory.customer_appointments = {
+                      [resourceName]: {
+                        retrievedAt: new Date().toISOString(),
+                        appointments: appointmentsData.appointments || []
+                      }
+                    };
+                    
+                    // Modify the lookup tool result to include appointment info
+                    const appointmentCount = appointmentsData.appointments?.length || 0;
+                    const appointmentSummary = appointmentCount > 0 
+                      ? `Found ${appointmentCount} previous appointments for ${customerName}.` 
+                      : `No previous appointments found for ${customerName}.`;
+                    
+                    // Append appointment info to the existing lookup result
+                    let enhancedResult = typeof toolResult === 'string' 
+                      ? JSON.parse(toolResult) 
+                      : {...toolResult};
+                    
+                    enhancedResult.appointmentInfo = appointmentSummary;
+                    enhancedResult.hasAppointments = appointmentCount > 0;
+                    
+                    // Replace the original tool response
+                    toolResponses[toolResponses.length - 1].content = JSON.stringify(enhancedResult);
+                    
+                    console.log(`✅ Enhanced lookupUser result with appointment info: ${appointmentSummary}`);
+                  } else {
+                    console.warn(`⚠️ getCustomerAppointments tool not found for auto-fetching`);
+                  }
+                }
+              } catch (parseError) {
+                console.error(`❌ Error enhancing lookupUser result:`, parseError);
+              }
+            }
           } catch (error) {
             console.error(`Error executing tool ${toolName}:`, error);
             toolResponses.push({

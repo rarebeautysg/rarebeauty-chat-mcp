@@ -8,6 +8,7 @@ const createContact = require('./createContact');
 const storeUser = require('./storeUser');
 const suggestServices = require('./suggestServices');
 const scanConversation = require('./scanConversation');
+const getCustomerAppointments = require('./getCustomerAppointments');
 
 /**
  * Creates tool instances with context for a given session
@@ -124,6 +125,17 @@ function createTools(context, sessionId) {
     }
   } catch (error) {
     console.error('❌ Error creating scanConversation tool:', error);
+  }
+  
+  // getCustomerAppointments tool
+  try {
+    if (getCustomerAppointments.createGetCustomerAppointmentsTool) {
+      tools.push(getCustomerAppointments.createGetCustomerAppointmentsTool(context, sessionId));
+    } else {
+      console.warn('⚠️ GetCustomerAppointmentsTool could not be created with context');
+    }
+  } catch (error) {
+    console.error('❌ Error creating getCustomerAppointments tool:', error);
   }
   
   return tools;

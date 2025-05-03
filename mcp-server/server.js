@@ -98,7 +98,7 @@ async function createNewMCPContext(sessionId, isAdmin = false) {
       assistantMentionedServices: [] // Services mentioned by the assistant
     },
     tools: isAdmin
-      ? ["lookupUser", "createContact", "listServices", "getServiceInfo", "getAvailableSlots", "bookAppointment", "storeUser", "suggestServices", "scanConversation"] 
+      ? ["lookupUser", "createContact", "listServices", "getServiceInfo", "getAvailableSlots", "bookAppointment", "storeUser", "suggestServices", "scanConversation", "getCustomerAppointments"] 
       : ["lookupUser", "listServices", "getServiceInfo", "getAvailableSlots", "bookAppointment", "storeUser", "suggestServices", "scanConversation"],
     history: [],
     detectedServiceIds: [] // Store service IDs detected in the conversation

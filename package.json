@@ -17,8 +17,6 @@
   "devDependencies": {
     "concurrently": "^8.2.2"
   },
-  "dependencies": {
-    "@aws-sdk/client-dynamodb": "^3.799.0",
-    "github-markdown-css": "^5.8.1"
+  "dependencies": {    
   }
 }

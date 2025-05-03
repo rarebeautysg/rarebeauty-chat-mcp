@@ -1,6 +1,7 @@
-import { StructuredTool } from "@langchain/core/tools";
-import { z } from "zod";
-import axios from "axios";
+// Convert imports to CommonJS requires
+const { StructuredTool } = require("@langchain/core/tools");
+const { z } = require("zod");
+const axios = require("axios");
 
 // In-memory contact cache
 let contactsCache = [];
@@ -99,7 +100,7 @@ async function getContacts() {
   return contactsCache;
 }
 
-export class LookupUserTool extends StructuredTool {
+class LookupUserTool extends StructuredTool {
   constructor(context, sessionId) {
     super();
     this.name = "lookupUser";
@@ -240,6 +241,7 @@ export class LookupUserTool extends StructuredTool {
     
     // Use the memory service to update the session-to-resource mapping
     try {
+      // Direct CommonJS require for node compatibility
       const memoryService = require('../services/memoryService');
       memoryService.setSessionToResourceMapping(this.sessionId, contact.resourceName);
     } catch (error) {
@@ -279,3 +281,9 @@ export class LookupUserTool extends StructuredTool {
     console.log(`✅ Updated context with found customer: ${contact.name}, resourceName: ${contact.resourceName}`);
   }
 }
+
+// Use CommonJS exports
+module.exports = {
+  LookupUserTool,
+  createLookupUserTool: (context, sessionId) => new LookupUserTool(context, sessionId)
+};

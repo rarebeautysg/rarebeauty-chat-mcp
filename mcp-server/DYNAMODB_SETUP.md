@@ -53,8 +53,8 @@ For production, you'll need to set up DynamoDB in your AWS account.
 ```bash
 aws dynamodb create-table \
     --table-name rare-beauty-context-memory \
-    --attribute-definitions AttributeName=sessionId,AttributeType=S \
-    --key-schema AttributeName=sessionId,KeyType=HASH \
+    --attribute-definitions AttributeName=resourceName,AttributeType=S \
+    --key-schema AttributeName=resourceName,KeyType=HASH \
     --billing-mode PAY_PER_REQUEST
 ```
 
