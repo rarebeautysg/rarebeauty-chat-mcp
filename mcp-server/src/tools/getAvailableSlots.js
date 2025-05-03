@@ -3,6 +3,7 @@ const { z } = require("zod");
 const { calendar_v3 } = require('@googleapis/calendar');
 const { JWT } = require('google-auth-library');
 const axios = require('axios');
+const { getServiceById } = require('./listServices');
 
 // Cache for public holidays
 let publicHolidaysCache = null;
@@ -323,7 +324,6 @@ class GetAvailableSlotsTool extends Tool {
       if (serviceIds && serviceIds.length > 0) {
         // Try to get the service duration from the first service
         try {
-          const { getServiceById } = require('./getServices');
           const service = await getServiceById(serviceIds[0]);
           if (service && service.duration) {
             serviceDuration = service.duration;

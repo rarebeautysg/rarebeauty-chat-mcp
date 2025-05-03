@@ -7,6 +7,7 @@ const dotenv = require('dotenv');
 const { v4: uuidv4 } = require('uuid');
 const jwt = require('jsonwebtoken');
 const path = require('path');
+const { transcribeAudio } = require('./src/services/audioTranscription');
 
 // Load environment variables from .env file
 console.log(`🔧 Loading environment from .env`);
@@ -16,7 +17,7 @@ dotenv.config();
 console.log(`🔑 Auth token loaded:`, process.env.SOHO_AUTH_TOKEN ? 'Yes' : 'No');
 
 // Import LLM integration
-const { executors, adminExecutors, toolResults, getOrCreateExecutor } = require('./src/chat-utils');
+const { executors, adminExecutors, toolResults } = require('./src/chat-utils');
 
 const app = express();
 const server = http.createServer(app);
@@ -85,11 +86,13 @@ function createNewMCPContext(sessionId, isAdmin = false) {
       user_info: null,
       last_selected_service: null,
       preferred_date: null,
-      preferred_time: null
+      preferred_time: null,
+      highlightedServices: [], // Services mentioned by the user in conversation
+      assistantMentionedServices: [] // Services mentioned by the assistant
     },
     tools: isAdmin
-      ? ["lookupUser", "createContact", "listServices", "getServiceInfo", "getAvailableSlots", "bookAppointment", "storeUser"] 
-      : ["lookupUser", "listServices", "getServiceInfo", "getAvailableSlots", "bookAppointment", "storeUser"],
+      ? ["lookupUser", "createContact", "listServices", "getServiceInfo", "getAvailableSlots", "bookAppointment", "storeUser", "suggestServices", "scanConversation"] 
+      : ["lookupUser", "listServices", "getServiceInfo", "getAvailableSlots", "bookAppointment", "storeUser", "suggestServices", "scanConversation"],
     history: []
   };
 }
@@ -245,18 +248,72 @@ io.on('connection', (socket) => {
           : ["lookupUser", "listServices", "getServiceInfo", "getAvailableSlots", "bookAppointment", "storeUser"];
       }
       
-      // Add user message to history
-      context.history.push({ role: 'user', content: data.message });
+      // Check if message contains audio data that needs transcription
+      let messageContent = data.message;
+      const audioDataMatch = data.message.match(/\[AUDIO_DATA:(.*?)\]/);
+      
+      if (audioDataMatch && audioDataMatch[1]) {
+        try {
+          // Extract the base64 audio data
+          const base64Audio = audioDataMatch[1];
+          console.log('🎙️ Detected audio data, transcribing...');
+          
+          // Transcribe the audio
+          const transcription = await transcribeAudio(base64Audio);
+          console.log(`🎙️ Transcription complete: "${transcription}"`);
+          
+          // Replace the original message with the transcription
+          messageContent = transcription;
+          
+          // Send a confirmation message about the transcription
+          socket.emit('message', {
+            role: 'assistant',
+            content: `I heard: "${transcription}"`,
+            id: uuidv4()
+          });
+        } catch (error) {
+          console.error('❌ Error transcribing audio:', error);
+          socket.emit('message', {
+            role: 'assistant',
+            content: 'I couldn\'t understand the audio. Could you please type your message instead?',
+            id: uuidv4()
+          });
+          
+          // Stop typing indicator and exit early
+          socket.emit('typing', false);
+          return;
+        }
+      }
+      
+      // Add user message to history (use transcribed text if it was audio)
+      context.history.push({ role: 'user', content: messageContent });
       mcpContexts.set(sessionId, context);
       
+      // Scan message for service mentions and add to context
+      try {
+        const { createScanConversationTool } = require('./src/tools/scanConversation');
+        const scanTool = createScanConversationTool(context, sessionId);
+        
+        // Scan the message for service mentions
+        const scanResult = await scanTool._call({ message: messageContent });
+        console.log(`🔍 Scanned message for service mentions: ${
+          scanResult.serviceMentions.length > 0 
+            ? `found ${scanResult.serviceMentions.length} mentions` 
+            : 'no services mentioned'
+        }`);
+      } catch (error) {
+        console.error('❌ Error scanning message for service mentions:', error);
+        // Non-critical error, continue with chat processing
+      }
+      
       // Infer goals from message content (simple heuristics)
-      if (data.message.toLowerCase().includes('book') || data.message.toLowerCase().includes('appointment')) {
+      if (messageContent.toLowerCase().includes('book') || messageContent.toLowerCase().includes('appointment')) {
         if (!context.goals.includes('book_appointment')) {
           context.goals.push('book_appointment');
         }
       }
       
-      if (data.message.toLowerCase().includes('service') || data.message.toLowerCase().includes('price')) {
+      if (messageContent.toLowerCase().includes('service') || messageContent.includes('price')) {
         if (!context.goals.includes('provide_service_information')) {
           context.goals.push('provide_service_information');
         }
@@ -264,17 +321,18 @@ io.on('connection', (socket) => {
       
       try {
         // Get or create executor for this session
+        const { getOrCreateExecutor } = require('./src/chat-utils');
         const executor = await getOrCreateExecutor(sessionId, data.isAdmin);
 
         // Get user context from MCP memory
         const userInfo = context.memory.user_info;
         
         // Prepare input with user context if available
-        let inputToUse = data.message;
+        let inputToUse = messageContent;
         if (userInfo?.resourceName) {
           inputToUse = `[REMINDER: This customer's ResourceName is "${userInfo.resourceName}"]
           
-${data.message}`;
+${messageContent}`;
           console.log('📝 Enhanced input with user context for session', sessionId);
         }
         
@@ -310,6 +368,46 @@ ${data.message}`;
         
         // Add assistant response to history
         context.history.push({ role: 'assistant', content: responseContent });
+        
+        // Scan assistant response for service mentions and add to context
+        try {
+          const { createScanConversationTool } = require('./src/tools/scanConversation');
+          const scanTool = createScanConversationTool(context, sessionId);
+          
+          // Scan the assistant response for service mentions
+          const scanResult = await scanTool._call({ 
+            message: responseContent,
+            analyzeOnly: true // Don't automatically add to highlighted services, just analyze
+          });
+          
+          if (scanResult.serviceMentions.length > 0) {
+            console.log(`🔍 Found ${scanResult.serviceMentions.length} service mentions in assistant response`);
+            
+            // We found services in the assistant response - track them for future reference
+            if (!context.memory.assistantMentionedServices) {
+              context.memory.assistantMentionedServices = [];
+            }
+            
+            // Add the mentioned services to the list
+            scanResult.serviceMentions.forEach(mention => {
+              // Check if this service was already mentioned
+              const alreadyMentioned = context.memory.assistantMentionedServices.some(
+                s => s.id === mention.id
+              );
+              
+              if (!alreadyMentioned) {
+                context.memory.assistantMentionedServices.push({
+                  id: mention.id,
+                  name: mention.serviceName,
+                  mentionedAt: new Date().toISOString()
+                });
+              }
+            });
+          }
+        } catch (error) {
+          console.error('❌ Error scanning assistant response for service mentions:', error);
+          // Non-critical error, continue with chat processing
+        }
         
         // Check for service or appointment preferences in the conversation and update memory
         if (responseContent.toLowerCase().includes('service') && responseContent.match(/['"](.*?)['"]/) !== null) {

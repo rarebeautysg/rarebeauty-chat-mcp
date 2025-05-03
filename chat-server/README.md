@@ -161,3 +161,32 @@ The application uses LangChain tools to handle specific functionality:
 - [LangChain](https://langchain.com/) for the agent framework
 - [Next.js](https://nextjs.org/) for the React framework
 - [Tailwind CSS](https://tailwindcss.com/) for styling
+
+### Text Chat
+The chat system allows users to have conversations with an AI assistant. Users can type messages and receive responses from the assistant.
+
+### Voice Recording
+The chat system now supports voice recording for a more convenient user experience.
+
+#### How to use:
+1. Click the microphone icon in the chat input area.
+2. Grant microphone permissions if prompted.
+3. Record your message.
+4. When finished, click the stop button.
+5. Preview your recording and click "Send" to transmit it or "Discard" to cancel.
+6. The system will transcribe your audio using OpenAI's Whisper model and process it like a regular text message.
+
+## Technical Implementation
+- The voice recording component uses the Web Audio API and MediaRecorder API.
+- Audio is captured, encoded, and sent as a base64 string to the server.
+- The server uses OpenAI's Whisper API to transcribe the audio to text.
+- The transcribed text is then processed by the AI assistant just like a regular text message.
+
+## Environment Variables
+Make sure you have the following environment variables set:
+- `OPENAI_API_KEY`: Your OpenAI API key for audio transcription
+
+## Requirements
+- Modern browser that supports the MediaRecorder API
+- Microphone access
+- Internet connection for audio transcription

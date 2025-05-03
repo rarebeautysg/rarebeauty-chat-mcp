@@ -1,6 +1,6 @@
 const { StructuredTool } = require("@langchain/core/tools");
 const { z } = require("zod");
-const { getAllFormattedServices, getServiceDuration } = require('./listServices');
+const { getAllFormattedServices, getServiceDuration, getHighlightedServices } = require('./listServices');
 
 const BookAppointmentSchema = z.object({
   serviceIds: z.array(z.string()),
@@ -201,11 +201,32 @@ class BookAppointmentTool extends StructuredTool {
         this.context.memory.tool_usage.bookAppointment = [];
       }
       
-      // Store the request in tool usage
+      // Log this booking attempt
       this.context.memory.tool_usage.bookAppointment.push({
         timestamp: new Date().toISOString(),
-        params: inputs
+        serviceIds,
+        date,
+        time
       });
+      
+      // Check if any services in serviceIds match highlighted services
+      if (this.context.memory.highlightedServices && this.context.memory.highlightedServices.length > 0) {
+        const highlightedIds = this.context.memory.highlightedServices.map(s => s.id);
+        const matchingIds = serviceIds.filter(id => highlightedIds.includes(id));
+        
+        if (matchingIds.length > 0) {
+          console.log(`✅ Booking includes ${matchingIds.length} highlighted services previously mentioned by user`);
+          
+          // Add booking intent to each highlighted service
+          matchingIds.forEach(id => {
+            const highlightedService = this.context.memory.highlightedServices.find(s => s.id === id);
+            if (highlightedService) {
+              highlightedService.bookedAt = new Date().toISOString();
+              highlightedService.bookingDetails = { date, time, name, mobile };
+            }
+          });
+        }
+      }
       
       // Update context memory
       if (serviceIds && serviceIds.length > 0) {
@@ -258,7 +279,27 @@ class BookAppointmentTool extends StructuredTool {
 
     console.log('📅 Booking appointment with inputs:', inputs);
     
-    const serviceIdArray = Array.isArray(serviceIds) ? serviceIds : [serviceIds];
+    // Fix for comma-separated service IDs
+    let serviceIdArray = [];
+    if (Array.isArray(serviceIds)) {
+      // Process each array element for potential comma-separated values
+      serviceIds.forEach(id => {
+        if (typeof id === 'string' && id.includes(',')) {
+          // Split comma-separated values and add them individually
+          serviceIdArray.push(...id.split(',').map(s => s.trim()));
+        } else {
+          serviceIdArray.push(id);
+        }
+      });
+    } else if (typeof serviceIds === 'string') {
+      // Handle a single string that might contain comma-separated values
+      serviceIdArray = serviceIds.includes(',') ? 
+        serviceIds.split(',').map(s => s.trim()) : 
+        [serviceIds];
+    }
+    
+    console.log(`🔄 Processing service IDs: ${JSON.stringify(serviceIdArray)}`);
+    
     if (serviceIdArray.length === 0) {
       return JSON.stringify({
         success: false,
@@ -316,7 +357,11 @@ class BookAppointmentTool extends StructuredTool {
         let matchedServiceId = serviceId;
         let serviceName = serviceId;
 
+        // Log the original service ID for debugging
+        console.log(`🔍 Looking up service ID: ${serviceId}`);
+
         if (!serviceId.startsWith('service:')) {
+          // If it's a service name, find the matching service ID
           const matchedService = allServices.find(s =>
             s.name.toLowerCase() === serviceId.toLowerCase() ||
             s.name.toLowerCase().includes(serviceId.toLowerCase())
@@ -325,11 +370,28 @@ class BookAppointmentTool extends StructuredTool {
           if (matchedService) {
             matchedServiceId = matchedService.id;
             serviceName = matchedService.name;
+            console.log(`✅ Found service by name: ${serviceName} with ID: ${matchedServiceId}`);
+          } else {
+            console.log(`⚠️ Could not find service with name: ${serviceId}, keeping original ID`);
           }
         } else {
+          // If it already has the service: prefix, validate it exists
           const matchedService = allServices.find(s => s.id === serviceId);
           if (matchedService) {
             serviceName = matchedService.name;
+            console.log(`✅ Validated service ID: ${serviceId} (${serviceName})`);
+          } else {
+            // Try to find a service by removing the year suffix
+            const baseServiceId = serviceId.replace(/-\d+$/, '');
+            const alternativeService = allServices.find(s => s.id.startsWith(baseServiceId));
+            
+            if (alternativeService) {
+              matchedServiceId = alternativeService.id;
+              serviceName = alternativeService.name;
+              console.log(`🔄 Replaced invalid service ID: ${serviceId} with valid ID: ${matchedServiceId} (${serviceName})`);
+            } else {
+              console.log(`⚠️ Could not validate service ID: ${serviceId}, it may not exist in the SOHO system`);
+            }
           }
         }
 
@@ -339,7 +401,9 @@ class BookAppointmentTool extends StructuredTool {
         // Calculate duration and price only if not explicitly provided
         if (!duration) {
           try {
+            console.log(`🕒 Getting duration for service ${matchedServiceId}`);
             const serviceDuration = await getServiceDuration(matchedServiceId);
+            console.log(`✅ Service ${matchedServiceId} duration: ${serviceDuration} minutes`);
             totalDuration += serviceDuration;
 
             const matchedService = allServices.find(s => s.id === matchedServiceId);
@@ -348,7 +412,9 @@ class BookAppointmentTool extends StructuredTool {
             }
           } catch (e) {
             console.error(`❌ Error getting service duration for ${matchedServiceId}:`, e);
-            totalDuration += 60; // Default to 60 minutes if there's an error
+            // Default to 60 minutes if there's an error
+            console.log(`⚠️ Using default duration (60 minutes) for ${matchedServiceId}`);
+            totalDuration += 60; 
           }
         }
       }
@@ -471,6 +537,31 @@ class BookAppointmentTool extends StructuredTool {
   }
 }
 
+// Function to get highlighted services from context (for AI assistant to suggest)
+function getSuggestedServices(context) {
+  try {
+    if (!context || !context.memory || !context.memory.highlightedServices) {
+      return [];
+    }
+    
+    // Get highlighted services that haven't been booked yet
+    const suggestedServices = context.memory.highlightedServices
+      .filter(service => !service.bookedAt)
+      .map(service => ({
+        id: service.id,
+        name: service.name,
+        category: service.category,
+        price: service.price,
+        highlightedAt: service.highlightedAt
+      }));
+    
+    return suggestedServices;
+  } catch (error) {
+    console.error('❌ Error getting suggested services:', error);
+    return [];
+  }
+}
+
 /**
  * Creates a bookAppointment tool instance with context
  * @param {Object} context - The MCP context for the session
@@ -483,5 +574,6 @@ function createBookAppointmentTool(context, sessionId) {
 
 module.exports = {
   BookAppointmentTool,
-  createBookAppointmentTool
+  createBookAppointmentTool,
+  getSuggestedServices
 }; 
