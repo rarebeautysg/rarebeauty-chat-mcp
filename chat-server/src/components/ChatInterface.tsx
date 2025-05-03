@@ -2,7 +2,6 @@ import React, { useState, useRef, useEffect } from 'react';
 import { MessageBubble } from './MessageBubble';
 import ChatInput from './ChatInput';
 import TypingIndicator from './TypingIndicator';
-import { useSocket } from '../hooks/useSocket';
 
 // Define Message type here directly instead of importing to avoid circular dependency
 export interface Message {
@@ -16,17 +15,18 @@ export interface ChatInterfaceProps {
   onSendMessage: (message: string) => void;
   isLoading: boolean;
   placeholder?: string;
+  isTyping?: boolean;
 }
 
 export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   messages,
   onSendMessage,
   isLoading,
-  placeholder
+  placeholder,
+  isTyping = false
 }) => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [sessionId, setSessionId] = useState<string>('');
-  const { isTyping } = useSocket();
 
   // Load session ID from localStorage on component mount
   useEffect(() => {

@@ -113,6 +113,9 @@ CUSTOMER APPOINTMENT HISTORY:
 - Begin with "Here's the appointment history for [customer name]:" instead of "Here's your appointment history"
 - ALWAYS display the appointments and the services in a clear, well-formatted table with these exact columns:
   | Date | Time | Services | Duration | Price (SGD)
+- When displaying service names from appointment history:
+  - Use the "displayServiceName" field for display, NOT the obfuscated "serviceName" field
+  - Use the "displayServiceId" field if you need to show a service ID, NOT the obfuscated "serviceId" field
 - Format the appointment history as follows:
   - Date should be in DD/MM/YYYY format
   - Time should be in 24-hour format (HH:MM)

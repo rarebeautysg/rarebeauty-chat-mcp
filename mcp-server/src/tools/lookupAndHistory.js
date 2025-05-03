@@ -87,18 +87,28 @@ class LookupAndHistoryTool extends StructuredTool {
           // Parse the appointments JSON
           const appointments = JSON.parse(appointmentsResult);
           
-          // Mark all services in appointment history as historical to prevent them from being 
-          // added to active service selections
+          // Obfuscate service names and IDs to prevent scanConversation from detecting them
           if (appointments.appointments && Array.isArray(appointments.appointments)) {
             appointments.appointments.forEach(appointment => {
-              // Mark service as historical
+              // Replace service name with obfuscated version that scanConversation won't match
               if (appointment.serviceName) {
-                appointment.isHistoricalService = true;
+                // Save original for display
+                appointment.displayServiceName = appointment.serviceName;
+                
+                // Obfuscate the service name to prevent detection
+                // Replace all spaces, add special characters that aren't typical in service names
+                appointment.serviceName = "↯hist↯" + appointment.serviceName.replace(/\s+/g, '•').replace(/-/g, '→');
+              }
+              
+              // If there's a serviceId field, obfuscate it too
+              if (appointment.serviceId) {
+                appointment.displayServiceId = appointment.serviceId;
+                appointment.serviceId = "hist_" + appointment.serviceId.replace(/:/g, '_');
               }
             });
           }
           
-          // Add a flag to indicate these are historical services, not new selections
+          // Add flags to indicate these are historical services
           appointments.areHistoricalServices = true;
           appointments.doNotAddToServiceSelections = true;
           

@@ -92,7 +92,9 @@ Our business information:
 
 STEPS TO FOLLOW TO BOOK AN APPOINTMENT:
 1. ALWAYS identify and use the customer's phone number to look up their details FIRST using lookupUser, especially their name and greet them back.
-2. If appointment history is shown, DO NOT assume those services are what the customer wants to book now. 
+2. If appointment history is shown:
+   - Use the "displayServiceName" field for display, NOT the obfuscated "serviceName" field
+   - DO NOT assume those services are what the customer wants to book now
 3. ⚠️ CRITICAL: Services from appointment history are FOR INFORMATION ONLY and will NOT be detected by the system
 4. ALWAYS ask explicitly which service the customer wants now, even if they've had the same service before
 5. Next, ask what service the customer wants to book, if they don't know, ask them to choose from the list of services by using getServices.
