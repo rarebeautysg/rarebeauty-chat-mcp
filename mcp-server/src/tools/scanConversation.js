@@ -96,6 +96,25 @@ class ScanConversationTool extends StructuredTool {
         await initializeServicesOnce();
       }
       
+      // More thorough check for appointment history data
+      const isHistoricalData = 
+        message.includes('"areHistoricalServices":true') || 
+        message.includes('"doNotAddToServiceSelections":true') ||
+        message.includes('"isHistoricalService":true') ||
+        message.includes('appointment_message') ||
+        message.includes('appointmentData') ||
+        (message.includes('appointments') && message.includes('cancelCount')) ||
+        message.includes("appointment history");
+      
+      if (isHistoricalData) {
+        console.log(`🔍 Message appears to contain appointment history - skipping service detection entirely`);
+        return {
+          serviceMentions: [],
+          skippedDetection: true,
+          message: `Skipped service detection for appointment history data`
+        };
+      }
+      
       // Extract service IDs from the message using regex and service name matching
       const mentionedServices = this.extractServiceIds(message);
       console.log(`Found ${mentionedServices.length} service references in message`);
@@ -105,6 +124,22 @@ class ScanConversationTool extends StructuredTool {
         return {
           serviceMentions: mentionedServices,
           message: `Found ${mentionedServices.length} service references (analyze-only mode)`
+        };
+      }
+      
+      // Check if the message itself indicates it's just displaying historical data
+      const isDisplayingHistory = 
+        message.toLowerCase().includes("appointment history for") || 
+        message.toLowerCase().includes("previous appointments") ||
+        message.toLowerCase().includes("past appointments") ||
+        message.toLowerCase().includes("appointment details");
+        
+      if (isDisplayingHistory) {
+        console.log(`🔍 Message is displaying appointment history - skipping context updates`);
+        return {
+          serviceMentions: mentionedServices,
+          skippedContextUpdate: true,
+          message: `Detected services but skipped context updates for appointment history display`
         };
       }
       
@@ -172,6 +207,24 @@ class ScanConversationTool extends StructuredTool {
       return [];
     }
     
+    // Skip service detection in specific contexts related to appointment history
+    const skipContexts = [
+      "appointment history",
+      "previous appointment",
+      "past appointment",
+      "customer's appointments",
+      "has previously booked",
+      "has had appointments"
+    ];
+    
+    const lowercaseMsg = message.toLowerCase();
+    for (const skipContext of skipContexts) {
+      if (lowercaseMsg.includes(skipContext)) {
+        console.log(`🔍 Skipping service detection in "${skipContext}" context`);
+        return [];
+      }
+    }
+    
     const serviceReferences = [];
     const processedIds = new Set();
     
@@ -182,6 +235,14 @@ class ScanConversationTool extends StructuredTool {
     // Extract all service IDs mentioned directly in the text
     for (const match of serviceIdMatches) {
       const serviceId = match[1];
+      
+      // Skip if this appears to be in a historical context
+      const surroundingText = this.getSurroundingContext(message, match.index, 30);
+      if (this.isHistoricalContext(surroundingText)) {
+        console.log(`🔍 Skipping service ID ${serviceId} in historical context: "${surroundingText}"`);
+        continue;
+      }
+      
       if (!processedIds.has(serviceId)) {
         const service = servicesLookup.servicesById[serviceId];
         serviceReferences.push({
@@ -206,6 +267,13 @@ class ScanConversationTool extends StructuredTool {
         
         // Check if service name is in the message
         if (messageLower.includes(serviceName)) {
+          // Skip if this appears to be in a historical context
+          const surroundingText = this.getSurroundingContext(message, messageLower.indexOf(serviceName), 30);
+          if (this.isHistoricalContext(surroundingText)) {
+            console.log(`🔍 Skipping service "${serviceName}" in historical context: "${surroundingText}"`);
+            return;
+          }
+          
           serviceReferences.push({
             id: service.id,
             serviceName: service.name,
@@ -217,6 +285,13 @@ class ScanConversationTool extends StructuredTool {
         // Also check common variations (e.g., "lashes dense" for "Lashes - Full Set - Dense")
         const simplifiedName = service.name.toLowerCase().replace(/\s*-\s*/g, ' ');
         if (simplifiedName !== serviceName && messageLower.includes(simplifiedName)) {
+          // Skip if this appears to be in a historical context
+          const surroundingText = this.getSurroundingContext(message, messageLower.indexOf(simplifiedName), 30);
+          if (this.isHistoricalContext(surroundingText)) {
+            console.log(`🔍 Skipping simplified service "${simplifiedName}" in historical context: "${surroundingText}"`);
+            return;
+          }
+          
           serviceReferences.push({
             id: service.id,
             serviceName: service.name,
@@ -228,6 +303,24 @@ class ScanConversationTool extends StructuredTool {
     }
     
     return serviceReferences;
+  }
+  
+  // Helper to get text surrounding a match position
+  getSurroundingContext(text, position, contextSize = 30) {
+    const start = Math.max(0, position - contextSize);
+    const end = Math.min(text.length, position + contextSize);
+    return text.substring(start, end);
+  }
+  
+  // Helper to determine if text appears to be in a historical context
+  isHistoricalContext(text) {
+    const historicalIndicators = [
+      "previous", "past", "history", "booked before", "last time", 
+      "last appointment", "appointment on", "had on", "completed on"
+    ];
+    
+    const lowercaseText = text.toLowerCase();
+    return historicalIndicators.some(indicator => lowercaseText.includes(indicator));
   }
   
   // Helper method to track tool usage in context memory

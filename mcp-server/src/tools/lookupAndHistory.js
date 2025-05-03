@@ -30,6 +30,10 @@ class LookupAndHistoryTool extends StructuredTool {
     this.context = context;
     this.sessionId = sessionId;
     
+    // Check if we're in admin mode
+    this.isAdmin = context?.identity?.role === "admin" || context?.identity?.is_admin === true;
+    console.log(`🔐 LookupAndHistoryTool initialized with admin status: ${this.isAdmin ? 'YES' : 'NO'}`);
+    
     // Create the individual tools for internal use
     this.lookupUserTool = createLookupUserTool(context, sessionId);
     this.getCustomerAppointmentsTool = createGetCustomerAppointmentsTool(context, sessionId);
@@ -83,12 +87,29 @@ class LookupAndHistoryTool extends StructuredTool {
           // Parse the appointments JSON
           const appointments = JSON.parse(appointmentsResult);
           
+          // Mark all services in appointment history as historical to prevent them from being 
+          // added to active service selections
+          if (appointments.appointments && Array.isArray(appointments.appointments)) {
+            appointments.appointments.forEach(appointment => {
+              // Mark service as historical
+              if (appointment.serviceName) {
+                appointment.isHistoricalService = true;
+              }
+            });
+          }
+          
+          // Add a flag to indicate these are historical services, not new selections
+          appointments.areHistoricalServices = true;
+          appointments.doNotAddToServiceSelections = true;
+          
           // Combine the result
           const combinedResult = {
             ...input.lookupResult,
             appointments: appointments.appointments || [],
             appointment_message: appointments.message || "No appointment data available",
-            cancelCount: appointments.cancelCount || 0
+            cancelCount: appointments.cancelCount || 0,
+            areHistoricalServices: true,
+            doNotAddToServiceSelections: true
           };
           
           console.log(`✅ LookupAndHistoryTool: Successfully combined user and appointment data`);
@@ -112,6 +133,13 @@ class LookupAndHistoryTool extends StructuredTool {
     try {
       // Run the sequence
       const result = await this.sequence.invoke(input);
+      
+      // Add admin context flag to the result
+      if (this.isAdmin) {
+        result.isAdminView = true;
+        result.forCustomer = false;
+        console.log(`🔐 Adding admin context flags to lookupUser result`);
+      }
       
       // Return as JSON string to match the original tool's behavior
       return JSON.stringify(result);
