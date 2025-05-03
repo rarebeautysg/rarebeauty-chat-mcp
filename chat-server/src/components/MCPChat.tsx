@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useSocket } from '@/context/SocketContext';
 import { useSearchParams } from 'next/navigation';
 import ChatInput from './ChatInput';
@@ -12,6 +12,12 @@ const MCPChat: React.FC<MCPChatProps> = ({ isAdmin = false }) => {
   const { messages, isTyping, isCustomerLoaded, connectionStatus } = useSocket();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const searchParams = useSearchParams();
+  const [isMounted, setIsMounted] = useState(false);
+
+  // Set mounted state after hydration
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   // Scroll to bottom when messages change
   useEffect(() => {
@@ -22,18 +28,16 @@ const MCPChat: React.FC<MCPChatProps> = ({ isAdmin = false }) => {
 
   // Check for resource in URL
   useEffect(() => {
-    if (!searchParams) return;
-    
-    const resource = searchParams.get('resource');
+    const resource = searchParams?.get('resource');
     if (resource && !isCustomerLoaded) {
       console.log(`Found resource in URL: ${resource}`);
     }
   }, [searchParams, isCustomerLoaded]);
 
   return (
-    <div className="flex flex-col h-full max-h-full">
-      {/* Connection status banner */}
-      {connectionStatus !== 'connected' && (
+    <div className="flex flex-col h-full max-h-full bg-white">
+      {/* Connection status banner - only render on client */}
+      {isMounted && connectionStatus !== 'connected' && (
         <div className={`p-2 text-center text-sm ${
           connectionStatus === 'connecting' ? 'bg-yellow-100 text-yellow-800' :
           connectionStatus === 'error' ? 'bg-red-100 text-red-800' :
@@ -46,7 +50,7 @@ const MCPChat: React.FC<MCPChatProps> = ({ isAdmin = false }) => {
       )}
       
       {/* Chat messages area */}
-      <div className="flex-1 overflow-y-auto p-4">
+      <div className="flex-1 overflow-y-auto p-4 bg-white">
         {messages.length === 0 ? (
           <div className="flex items-center justify-center h-full">
             <p className="text-gray-500">
@@ -63,7 +67,8 @@ const MCPChat: React.FC<MCPChatProps> = ({ isAdmin = false }) => {
                 isLastMessage={idx === messages.length - 1}
               />
             ))}
-            {isTyping && (
+            {/* Only show typing indicator after mounted to prevent hydration mismatch */}
+            {isMounted && isTyping && (
               <div className="max-w-3xl mr-auto bg-gray-100 text-gray-900 rounded-lg p-3 animate-pulse shadow">
                 <div className="flex space-x-2">
                   <div className="w-2 h-2 rounded-full bg-gray-400"></div>

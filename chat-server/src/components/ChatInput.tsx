@@ -4,15 +4,25 @@ import { useSocket } from '@/context/SocketContext';
 interface ChatInputProps {
   isAdmin?: boolean;
   placeholder?: string;
+  isLoading?: boolean;
+  onSubmit?: (message: string) => void;
 }
 
 const ChatInput: React.FC<ChatInputProps> = ({ 
   isAdmin = false, 
-  placeholder = "Type your message..." 
+  placeholder = "Type your message...",
+  isLoading = false,
+  onSubmit
 }) => {
   const [message, setMessage] = useState('');
   const { sendMessage, isConnected, connectionStatus, isTyping } = useSocket();
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const [isMounted, setIsMounted] = useState(false);
+
+  // Set mounted state after hydration
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   // Focus input on mount
   useEffect(() => {
@@ -34,7 +44,12 @@ const ChatInput: React.FC<ChatInputProps> = ({
     
     if (!message.trim()) return;
     
-    sendMessage(message.trim(), isAdmin);
+    if (onSubmit) {
+      onSubmit(message.trim());
+    } else {
+      sendMessage(message.trim(), isAdmin);
+    }
+    
     setMessage('');
     
     // Reset height
@@ -45,8 +60,8 @@ const ChatInput: React.FC<ChatInputProps> = ({
 
   return (
     <div className="border-t border-gray-200 p-4 bg-white">
-      {/* Connection status indicator */}
-      {connectionStatus !== 'connected' && (
+      {/* Connection status indicator - only render on client */}
+      {isMounted && connectionStatus !== 'connected' && !onSubmit && (
         <div className="mb-2 text-sm text-center">
           {connectionStatus === 'connecting' && 
             <span className="text-yellow-500">Connecting to server...</span>}
@@ -57,8 +72,8 @@ const ChatInput: React.FC<ChatInputProps> = ({
         </div>
       )}
       
-      {/* Typing indicator */}
-      {isTyping && (
+      {/* Typing indicator - only render on client */}
+      {isMounted && (isTyping || isLoading) && (
         <div className="mb-2 text-sm text-gray-500">
           Assistant is typing...
         </div>
@@ -76,13 +91,13 @@ const ChatInput: React.FC<ChatInputProps> = ({
             }
           }}
           placeholder={placeholder}
-          disabled={!isConnected}
-          className="flex-1 resize-none rounded-md border border-gray-300 p-2 focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[40px] max-h-[120px]"
+          disabled={(!isConnected && !onSubmit) || isLoading}
+          className="flex-1 resize-none rounded-md border border-gray-300 p-2 focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[40px] max-h-[120px] bg-white text-gray-900"
           rows={1}
         />
         <button
           type="submit"
-          disabled={!isConnected || !message.trim()}
+          disabled={(!isConnected && !onSubmit) || !message.trim() || isLoading}
           className="bg-blue-500 text-white rounded-md px-4 py-2 hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed"
         >
           Send

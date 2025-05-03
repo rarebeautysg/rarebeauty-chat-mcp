@@ -80,25 +80,25 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
                 components={{
                   p: renderParagraphs,
                   h1: ({ node, ...props }) => (
-                    <h1 className="text-base sm:text-xl font-bold mt-4 mb-2" {...props} />
+                    <h1 className="text-base sm:text-xl font-bold mt-4 mb-2 text-gray-900" {...props} />
                   ),
                   h2: ({ node, ...props }) => (
-                    <h2 className="text-sm sm:text-lg font-bold mt-3 mb-2" {...props} />
+                    <h2 className="text-sm sm:text-lg font-bold mt-3 mb-2 text-gray-900" {...props} />
                   ),
                   h3: ({ node, ...props }) => (
-                    <h3 className="text-sm font-semibold mt-2 mb-1" {...props} />
+                    <h3 className="text-sm font-semibold mt-2 mb-1 text-gray-900" {...props} />
                   ),
                   ul: ({ node, ...props }) => (
-                    <ul className="list-disc pl-4 my-2 sm:my-3 space-y-1" {...props} />
+                    <ul className="list-disc pl-4 my-2 sm:my-3 space-y-1 text-gray-900" {...props} />
                   ),
                   ol: ({ node, ...props }) => (
-                    <ol className="list-decimal pl-5 my-2 sm:my-3 space-y-1" {...props} />
+                    <ol className="list-decimal pl-5 my-2 sm:my-3 space-y-1 text-gray-900" {...props} />
                   ),
                   li: ({ node, ...props }) => (
-                    <li className="my-1" {...props} />
+                    <li className="my-1 text-gray-900" {...props} />
                   ),
                   pre: ({ node, ...props }) => (
-                    <pre className="bg-gray-200 p-2 rounded my-2 overflow-x-auto text-xs font-mono" {...props} />
+                    <pre className="bg-gray-200 p-2 rounded my-2 overflow-x-auto text-xs font-mono text-gray-900" {...props} />
                   ),
                   table: ({ node, ...props }) => (
                     <TableRenderer {...props} />
