@@ -9,6 +9,7 @@ const storeUser = require('./storeUser');
 const suggestServices = require('./suggestServices');
 const scanConversation = require('./scanConversation');
 const getCustomerAppointments = require('./getCustomerAppointments');
+const lookupAndHistory = require('./lookupAndHistory');
 
 /**
  * Creates tool instances with context for a given session
@@ -22,17 +23,33 @@ function createTools(context, sessionId) {
   // Try to create each tool with context and session ID
   // Use try-catch to handle cases where some tools don't yet have factory functions
   
-  // lookupUser tool
+  // Use lookupAndHistory tool instead of lookupUser
   try {
-    if (lookupUser.LookupUserTool) {
-      tools.push(new lookupUser.LookupUserTool(context, sessionId));
-    } else if (lookupUser.createLookupUserTool) {
-      tools.push(lookupUser.createLookupUserTool(context, sessionId));
+    if (lookupAndHistory.createLookupAndHistoryTool) {
+      tools.push(lookupAndHistory.createLookupAndHistoryTool(context, sessionId));
+      console.log('✅ Using combined lookupAndHistory tool with auto-appointment retrieval');
     } else {
-      console.warn('⚠️ LookupUserTool could not be created with context');
+      console.warn('⚠️ LookupAndHistoryTool not available, falling back to standard lookupUser');
+      if (lookupUser.LookupUserTool) {
+        tools.push(new lookupUser.LookupUserTool(context, sessionId));
+      } else if (lookupUser.createLookupUserTool) {
+        tools.push(lookupUser.createLookupUserTool(context, sessionId));
+      } else {
+        console.warn('⚠️ LookupUserTool could not be created with context');
+      }
     }
   } catch (error) {
-    console.error('❌ Error creating lookupUser tool:', error);
+    console.error('❌ Error creating lookupAndHistory tool:', error);
+    console.warn('⚠️ Falling back to standard lookupUser');
+    try {
+      if (lookupUser.LookupUserTool) {
+        tools.push(new lookupUser.LookupUserTool(context, sessionId));
+      } else if (lookupUser.createLookupUserTool) {
+        tools.push(lookupUser.createLookupUserTool(context, sessionId));
+      }
+    } catch (fallbackError) {
+      console.error('❌ Error creating fallback lookupUser tool:', fallbackError);
+    }
   }
   
   // createContact tool
@@ -127,17 +144,11 @@ function createTools(context, sessionId) {
     console.error('❌ Error creating scanConversation tool:', error);
   }
   
-  // getCustomerAppointments tool
-  try {
-    if (getCustomerAppointments.createGetCustomerAppointmentsTool) {
-      tools.push(getCustomerAppointments.createGetCustomerAppointmentsTool(context, sessionId));
-    } else {
-      console.warn('⚠️ GetCustomerAppointmentsTool could not be created with context');
-    }
-  } catch (error) {
-    console.error('❌ Error creating getCustomerAppointments tool:', error);
-  }
-  
+  // Do NOT register getCustomerAppointments as a separate tool anymore
+  // since it's now integrated with lookupUser
+  // This prevents the LLM from calling it separately and ensures
+  // appointment history is always retrieved automatically
+  console.log(`✅ Created tools array with ${tools.length} tools`);
   return tools;
 }
 

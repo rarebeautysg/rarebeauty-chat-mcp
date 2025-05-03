@@ -123,7 +123,7 @@ IMPORTANT - ABOUT BEAUTY SERVICES:
 
 IMPORTANT - EXACT TOOL NAMES:
 The tools available to you have these EXACT names. Do not add or change any part:
-- lookupUser - for looking up customer by phone number, they usually start with 8 or 9 are in 8 digits, for singapore mobiel they might come with a prefix of +65 or 65.
+- lookupUser - for looking up customer by phone number and retrieving their appointment history. Phone numbers usually start with 8 or 9 and are 8 digits, for Singapore mobile they might come with a prefix of +65 or 65.
 - getServices - for getting service information
 - bookAppointment - for booking appointments
 - getAvailableSlots - for checking available time slots

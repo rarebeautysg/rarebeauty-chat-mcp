@@ -257,6 +257,9 @@ async function getOrCreateExecutor(sessionId, isAdmin = false) {
         
         console.log(`LLM wants to call ${result.tool_calls.length} tools`);
         
+        // Add this line to log the specific tools being called:
+        console.log(`🔧 Tools to be called:`, result.tool_calls.map(call => call.name).join(', '));
+        
         // Execute tool calls
         const toolResponses = [];
         for (const toolCall of result.tool_calls) {
@@ -317,70 +320,20 @@ async function getOrCreateExecutor(sessionId, isAdmin = false) {
           // Call the tool
           try {
             const toolResult = await tool._call(args);
+            
+            // Simple logging to see results
+            if (toolName === 'getCustomerAppointments') {
+              console.log(`✅ Appointments retrieved:`, typeof toolResult === 'string' ? 
+                toolResult.substring(0, 100) + '...' : 
+                JSON.stringify(toolResult).substring(0, 100) + '...');
+            }
+            
             toolResponses.push({
               tool_call_id: toolCall.id,
               role: "tool",
               name: toolName,
               content: typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult)
             });
-
-            // Store appointments in context after lookupUser
-            if (toolName === 'lookupUser' && !toolResult.includes('"error"')) {
-              try {
-                const lookupResult = typeof toolResult === 'string' ? JSON.parse(toolResult) : toolResult;
-                const resourceName = lookupResult.resourceName;
-                const customerName = lookupResult.name;
-                
-                if (resourceName) {
-                  console.log(`🔄 Fetching appointments for resourceName: ${resourceName}`);
-                  
-                  // Find the getCustomerAppointments tool
-                  const appointmentsTool = tools.find(t => t.name === 'getCustomerAppointments');
-                  
-                  if (appointmentsTool) {
-                    // Call the tool to get appointments, but don't add to toolResponses
-                    const appointmentsResult = await appointmentsTool._call({ resourceName, limit: 5 });
-                    
-                    // Parse the appointments
-                    const appointmentsData = typeof appointmentsResult === 'string' 
-                      ? JSON.parse(appointmentsResult) 
-                      : appointmentsResult;
-                    
-                    // Store the appointments in the context for future use
-                    if (!context.memory) context.memory = {};
-                    context.memory.customer_appointments = {
-                      [resourceName]: {
-                        retrievedAt: new Date().toISOString(),
-                        appointments: appointmentsData.appointments || []
-                      }
-                    };
-                    
-                    // Modify the lookup tool result to include appointment info
-                    const appointmentCount = appointmentsData.appointments?.length || 0;
-                    const appointmentSummary = appointmentCount > 0 
-                      ? `Found ${appointmentCount} previous appointments for ${customerName}.` 
-                      : `No previous appointments found for ${customerName}.`;
-                    
-                    // Append appointment info to the existing lookup result
-                    let enhancedResult = typeof toolResult === 'string' 
-                      ? JSON.parse(toolResult) 
-                      : {...toolResult};
-                    
-                    enhancedResult.appointmentInfo = appointmentSummary;
-                    enhancedResult.hasAppointments = appointmentCount > 0;
-                    
-                    // Replace the original tool response
-                    toolResponses[toolResponses.length - 1].content = JSON.stringify(enhancedResult);
-                    
-                    console.log(`✅ Enhanced lookupUser result with appointment info: ${appointmentSummary}`);
-                  } else {
-                    console.warn(`⚠️ getCustomerAppointments tool not found for auto-fetching`);
-                  }
-                }
-              } catch (parseError) {
-                console.error(`❌ Error enhancing lookupUser result:`, parseError);
-              }
-            }
           } catch (error) {
             console.error(`Error executing tool ${toolName}:`, error);
             toolResponses.push({
@@ -470,28 +423,19 @@ async function getOrCreateExecutor(sessionId, isAdmin = false) {
         const finalResult = await llm.invoke(finalMessages);
         return { output: finalResult.content };
       } catch (error) {
-        console.error(`Error in chat execution:`, error);
-        return { 
-          output: "I'm having trouble processing your request. Please try again." 
-        };
+        console.error(`Error in executor for session ${sessionId}:`, error);
+        return { output: `I'm sorry, there was an error processing your request. ${error.message}` };
       }
-    },
-    
-    // Store context snapshot
-    _lastContextSnapshot: JSON.parse(JSON.stringify(context))
+    }
   };
   
-  // Store it in the map
+  // Store the executor
   executorMap.set(sessionId, executor);
-  
   return executor;
 }
 
 module.exports = {
-  executors,
-  adminExecutors,
-  toolResults,
-  mcpContexts,
   getOrCreateExecutor,
-  createNewMCPContext
+  fetchPublicHolidays,
+  getServerDate
 };

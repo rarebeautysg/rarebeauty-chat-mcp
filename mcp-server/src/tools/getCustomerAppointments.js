@@ -29,7 +29,7 @@ async function fetchAppointmentsFromSoho(resourceName, limit = 5) {
   // Use the exact query format provided
   try {
     const payload = {
-      query: `{person(id: "${personId}")
+      query: `{person(id: "${resourceName}")
                 {   
                     id, 
                     cancelCount,
@@ -139,7 +139,7 @@ function formatAppointment(appointment) {
   let price = 0;
   
   if (transaction.items && transaction.items.length > 0) {
-    serviceName = transaction.items[0].name;
+    serviceNames = transaction.items.map(item => item.name).join(', ');
   }
   
   // Get price from transaction
@@ -165,89 +165,11 @@ function formatAppointment(appointment) {
     id: appointment.id || event.id || "Unknown ID",
     date: date,
     time: time,
-    serviceName: serviceName,
+    serviceNames: serviceNames,
     duration: duration,
     price: price,
-    staffName: event.resourceName || "Unknown Staff",
     status: event.status || "Unknown Status",
     notes: ""
-  };
-}
-
-// Generate mock data for testing in the same format as the SOHO API
-function generateMockAppointments(resourceName, limit = 5) {
-  console.log(`⚠️ Generating mock appointment data for ${resourceName}`);
-  
-  const services = [
-    { id: 'service:1', name: 'Haircut & Blow Dry', price: 75 },
-    { id: 'service:2', name: 'Hair Coloring', price: 120 },
-    { id: 'service:3', name: 'Manicure', price: 45 },
-    { id: 'service:4', name: 'Pedicure', price: 50 },
-    { id: 'service:5', name: 'Facial Treatment', price: 85 }
-  ];
-  
-  const staffNames = ['Sarah', 'Michael', 'Jessica', 'David', 'Emily'];
-  const statuses = ['CONFIRMED', 'CANCELLED', 'COMPLETED'];
-  
-  // Generate appointments for the past few months
-  const appointments = [];
-  const today = new Date();
-  
-  for (let i = 0; i < limit; i++) {
-    // Random date within the last 3 months
-    const appointmentDate = new Date(today);
-    appointmentDate.setDate(today.getDate() - Math.floor(Math.random() * 90));
-    
-    const service = services[Math.floor(Math.random() * services.length)];
-    const staffName = staffNames[Math.floor(Math.random() * staffNames.length)];
-    const status = statuses[Math.floor(Math.random() * statuses.length)];
-    
-    // Calculate end time (1 hour later)
-    const endDate = new Date(appointmentDate);
-    endDate.setHours(endDate.getHours() + 1);
-    
-    // Format in ISO format for consistency
-    const startISO = appointmentDate.toISOString();
-    const endISO = endDate.toISOString();
-    
-    appointments.push({
-      id: `mock-appt-${i + 1}`,
-      event: {
-        id: `mock-event-${i + 1}`,
-        start: startISO,
-        end: endISO,
-        status: status,
-        resourceName: staffName,
-        serviceIds: [service.id],
-        shortURL: '',
-        mobile: '87654321'
-      },
-      transaction: {
-        id: `mock-trans-${i + 1}`,
-        totalAmount: service.price,
-        service: service.price,
-        product: 0,
-        discount: 0,
-        additional: 0,
-        deposit: 0,
-        items: [
-          { name: service.name }
-        ]
-      }
-    });
-  }
-  
-  // Sort by date, most recent first
-  appointments.sort((a, b) => {
-    const dateA = new Date(a.event.start);
-    const dateB = new Date(b.event.start);
-    return dateB - dateA;
-  });
-  
-  // Return in the same format as the API
-  return {
-    appointments: appointments,
-    cancelCount: Math.floor(Math.random() * 3) // Random cancel count between 0-2
   };
 }
 
@@ -275,10 +197,10 @@ class GetCustomerAppointmentsTool extends StructuredTool {
       console.log(`🔄 Always fetching fresh appointment data for ${resourceName}`);
       let appointmentData = await fetchAppointmentsFromSoho(resourceName, limit);
       
-      // Use mock data if API returns empty appointments
+      // No longer use mock data if API returns empty appointments
       if (!appointmentData.appointments || appointmentData.appointments.length === 0) {
-        console.log(`⚠️ No appointments found, using mock data for demonstration`);
-        appointmentData = generateMockAppointments(resourceName, limit);
+        console.log(`ℹ️ No appointments found for ${resourceName}`);
+        appointmentData = { appointments: [], cancelCount: 0 };
       }
       
       // Format each appointment for display
@@ -339,6 +261,8 @@ class GetCustomerAppointmentsTool extends StructuredTool {
           cancelCount: appointmentData.cancelCount || 0
         });
       }
+
+      // console.log(`formattedAppointments ${JSON.stringify(formattedAppointments, null, 2 )}`);
       
       return JSON.stringify({
         message: `Found ${formattedAppointments.length} previous appointment(s) for this customer.`,
@@ -349,14 +273,12 @@ class GetCustomerAppointmentsTool extends StructuredTool {
     } catch (error) {
       console.error("❌ Error in getCustomerAppointments tool:", error);
       
-      // Return mock data as fallback
-      const mockData = generateMockAppointments(resourceName, limit);
-      const formattedMockData = mockData.appointments.map(formatAppointment);
-      
+      // Return an error message with empty data rather than mock data
       return JSON.stringify({
-        message: `Using sample appointment data for demonstration purposes.`,
-        appointments: formattedMockData,
-        cancelCount: mockData.cancelCount || 0
+        message: `Error retrieving appointment data: ${error.message}`,
+        error: true,
+        appointments: [],
+        cancelCount: 0
       });
     }
   }
