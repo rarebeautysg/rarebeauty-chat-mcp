@@ -190,6 +190,7 @@ class BookAppointmentTool extends StructuredTool {
     const { serviceIds, date, time, name, mobile, resourceName, force, duration, totalAmount, additional, discount, toBeInformed, deposit, notes } = inputs;
 
     console.log(`🔄 Book appointment request for session: ${this.sessionId}`);
+    console.log(`📋 Original service IDs provided by AI: ${JSON.stringify(serviceIds)}`);
     
     // Track tool usage in memory
     if (this.context && this.context.memory) {
@@ -301,11 +302,14 @@ class BookAppointmentTool extends StructuredTool {
     console.log(`🔄 Processing service IDs: ${JSON.stringify(serviceIdArray)}`);
     
     if (serviceIdArray.length === 0) {
-      return JSON.stringify({
-        success: false,
-        error: "At least one service ID is required"
-      });
+        return JSON.stringify({
+          success: false,
+          error: "At least one service ID is required"
+        });
     }
+    
+    // Respect service IDs - don't try to find duplicates early
+    // Each ID is important and might be intended, even if they look similar
 
     // Check if requested date is a Sunday
     const requestedDate = new Date(date);
@@ -352,62 +356,43 @@ class BookAppointmentTool extends StructuredTool {
       // Get all services using the consolidated API
       const allServices = await getAllFormattedServices();
 
+      // Look for previously detected service IDs in the context
+      const detectedIds = this.context?.detectedServiceIds || [];
+      if (detectedIds.length > 0) {
+        console.log(`🔍 Found ${detectedIds.length} previously detected service IDs in context`);
+      }
+
       // Process service IDs and calculate duration if not provided
       for (const serviceId of serviceIdArray) {
+        // Keep original serviceId as provided by the AI
         let matchedServiceId = serviceId;
-        let serviceName = serviceId;
+        let serviceName = "Unknown Service";
 
-        // Log the original service ID for debugging
-        console.log(`🔍 Looking up service ID: ${serviceId}`);
+        // Log the service ID for debugging
+        console.log(`🔍 Using service ID as provided by AI: ${serviceId}`);
 
-        if (!serviceId.startsWith('service:')) {
-          // If it's a service name, find the matching service ID
-          const matchedService = allServices.find(s =>
-            s.name.toLowerCase() === serviceId.toLowerCase() ||
-            s.name.toLowerCase().includes(serviceId.toLowerCase())
-          );
-
-          if (matchedService) {
-            matchedServiceId = matchedService.id;
-            serviceName = matchedService.name;
-            console.log(`✅ Found service by name: ${serviceName} with ID: ${matchedServiceId}`);
-          } else {
-            console.log(`⚠️ Could not find service with name: ${serviceId}, keeping original ID`);
-          }
+        // Try to find service information for display and duration calculation
+        const matchedService = allServices.find(s => s.id === serviceId);
+        if (matchedService) {
+          serviceName = matchedService.name;
+          console.log(`✅ Found service information: ${serviceName} (${serviceId})`);
         } else {
-          // If it already has the service: prefix, validate it exists
-          const matchedService = allServices.find(s => s.id === serviceId);
-          if (matchedService) {
-            serviceName = matchedService.name;
-            console.log(`✅ Validated service ID: ${serviceId} (${serviceName})`);
-          } else {
-            // Try to find a service by removing the year suffix
-            const baseServiceId = serviceId.replace(/-\d+$/, '');
-            const alternativeService = allServices.find(s => s.id.startsWith(baseServiceId));
-            
-            if (alternativeService) {
-              matchedServiceId = alternativeService.id;
-              serviceName = alternativeService.name;
-              console.log(`🔄 Replaced invalid service ID: ${serviceId} with valid ID: ${matchedServiceId} (${serviceName})`);
-            } else {
-              console.log(`⚠️ Could not validate service ID: ${serviceId}, it may not exist in the SOHO system`);
-            }
-          }
+          // We will still use the ID exactly as provided by the AI even if we can't find it
+          console.log(`⚠️ Using service ID ${serviceId} as provided by AI (service information not found)`);
         }
 
+        // Always use the exact service ID provided by the AI
         processedServiceIds.push(matchedServiceId);
         serviceNames.push(serviceName);
 
         // Calculate duration and price only if not explicitly provided
-        if (!duration) {
+        if (!duration && matchedService) {
           try {
-            console.log(`🕒 Getting duration for service ${matchedServiceId}`);
-            const serviceDuration = await getServiceDuration(matchedServiceId);
+            const serviceDuration = matchedService.duration || 60;
             console.log(`✅ Service ${matchedServiceId} duration: ${serviceDuration} minutes`);
             totalDuration += serviceDuration;
 
-            const matchedService = allServices.find(s => s.id === matchedServiceId);
-            if (matchedService && matchedService.price && !totalAmount) {
+            if (matchedService.price && !totalAmount) {
               totalPrice += matchedService.price;
             }
           } catch (e) {
@@ -416,6 +401,10 @@ class BookAppointmentTool extends StructuredTool {
             console.log(`⚠️ Using default duration (60 minutes) for ${matchedServiceId}`);
             totalDuration += 60; 
           }
+        } else if (!duration) {
+          // Default duration for unknown services
+          console.log(`⚠️ Using default duration (60 minutes) for ${matchedServiceId}`);
+          totalDuration += 60;
         }
       }
     } catch (error) {
@@ -442,6 +431,10 @@ class BookAppointmentTool extends StructuredTool {
       force: force === true,
       notes: notes || `Booked via chat assistant for ${name}`
     };
+
+    // Log the final list of services being booked
+    console.log(`📋 Final service IDs to book: ${JSON.stringify(processedServiceIds)}`);
+    console.log(`📋 Service names being booked: ${JSON.stringify(serviceNames)}`);
 
     // Prepare GraphQL request
     const graphqlRequest = prepareGraphQLRequest(bookingData, formattedStart);

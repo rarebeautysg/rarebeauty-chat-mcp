@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import { Message } from './ChatInterface';
+import { FaMicrophone } from 'react-icons/fa';
 import { 
   TableRenderer, 
   TableHead, 
@@ -12,6 +13,38 @@ import {
   TableHeader, 
   TableCell 
 } from './TableRenderer';
+
+// Utility function to check if content is a voice transcription
+const isVoiceTranscription = (content: string): boolean => {
+  // This pattern looks for long strings of random-looking characters typical of encoded voice data
+  const voiceEncodingPattern = /[a-zA-Z0-9\/\+\-]{80,}/;
+  return voiceEncodingPattern.test(content);
+};
+
+// Voice message component - separate from text messages
+const VoiceMessage: React.FC = () => {
+  return (
+    <div className="flex items-center gap-2">
+      <div className="bg-white p-1.5 rounded-full">
+        <FaMicrophone className="text-pink-500" />
+      </div>
+      <span className="text-white">Voice message</span>
+    </div>
+  );
+};
+
+// User message component
+const UserMessage: React.FC<{content: string}> = ({ content }) => {
+  if (isVoiceTranscription(content)) {
+    return <VoiceMessage />;
+  }
+  
+  return (
+    <p className="text-sm sm:text-base font-semibold text-white">
+      {content}
+    </p>
+  );
+};
 
 interface MessageBubbleProps {
   message: Message;
@@ -71,7 +104,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
           }`}
         >
           {message.role === 'user' ? (
-            <p className="text-sm sm:text-base font-semibold text-white">{message.content}</p>
+            <UserMessage content={message.content} />
           ) : (
             <div className="text-xs sm:text-sm font-medium markdown-content markdown-body">
               <ReactMarkdown

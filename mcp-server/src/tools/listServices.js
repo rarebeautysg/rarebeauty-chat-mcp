@@ -382,21 +382,63 @@ function getHighlightedServices(context) {
 }
 
 // Function to track when a service is mentioned in chat
-async function trackServiceMention(serviceName, context) {
+async function trackServiceMention(serviceName, context, serviceId) {
   if (!context || !context.memory) {
     console.log('⚠️ Cannot track service mention: context or memory not available');
     return false;
   }
   
   try {
-    const service = await getServiceByName(serviceName);
-    
-    if (!service) {
-      console.log(`⚠️ Cannot track service mention: no matching service found for "${serviceName}"`);
-      return false;
+    // Initialize highlighted services array if it doesn't exist
+    if (!context.memory.highlightedServices) {
+      context.memory.highlightedServices = [];
     }
     
-    return await highlightService(service.id, context);
+    // If we have a service ID directly from the AI, use it
+    if (serviceId && serviceId.startsWith('service:')) {
+      // Don't try to validate the service ID - trust the AI's identification
+      console.log(`🔍 Using service ID directly from AI: ${serviceId}`);
+      
+      // Check if service is already highlighted
+      const alreadyHighlighted = context.memory.highlightedServices.some(s => s.id === serviceId);
+      
+      if (!alreadyHighlighted) {
+        // Try to get service info for display purposes only
+        const services = await getAllFormattedServices();
+        const serviceInfo = services.find(s => s.id === serviceId);
+        
+        // Add to highlighted services
+        context.memory.highlightedServices.push({
+          id: serviceId,
+          name: serviceInfo ? serviceInfo.name : serviceName || `Service ${serviceId}`,
+          category: serviceInfo ? serviceInfo.category : 'Unknown',
+          price: serviceInfo ? serviceInfo.price : null,
+          highlightedAt: new Date().toISOString()
+        });
+        
+        console.log(`✅ Service ID "${serviceId}" highlighted and stored in context`);
+      } else {
+        console.log(`ℹ️ Service ID "${serviceId}" already highlighted`);
+      }
+      
+      // Also ensure it's in the detectedServiceIds array
+      if (context.detectedServiceIds && !context.detectedServiceIds.includes(serviceId)) {
+        context.detectedServiceIds.push(serviceId);
+      }
+      
+      return true;
+    }
+    
+    // If no service ID provided, try to find by name
+    if (serviceName) {
+      const service = await getServiceByName(serviceName);
+      if (service) {
+        return await highlightService(service.id, context);
+      }
+    }
+    
+    console.log(`⚠️ Cannot track service mention: no valid service ID or name provided`);
+    return false;
   } catch (error) {
     console.error(`❌ Error tracking service mention:`, error);
     return false;

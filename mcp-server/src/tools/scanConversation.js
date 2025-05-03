@@ -23,7 +23,9 @@ class ScanConversationTool extends StructuredTool {
     this.sessionId = sessionId;
     
     // Initialize service names lookup
-    this.servicesLookup = null;
+    this.servicesById = null;
+    this.servicesByName = null;
+    this.serviceCategories = null;
     this.initializeServices();
   }
   
@@ -31,26 +33,26 @@ class ScanConversationTool extends StructuredTool {
     try {
       const services = await getAllFormattedServices();
       
-      // Create lookup object for service names (case-insensitive)
-      this.servicesLookup = {};
+      // Create simple lookup maps by ID and name
+      this.servicesById = {};
+      this.servicesByName = {};
+      this.serviceCategories = new Set();
+      
       services.forEach(service => {
-        const nameLower = service.name.toLowerCase();
-        this.servicesLookup[nameLower] = service;
+        // Index by ID
+        this.servicesById[service.id] = service;
         
-        // Also add without category prefix for easier matching
-        // E.g. "Lashes - Extensions" -> "Extensions"
-        if (nameLower.includes(' - ')) {
-          const parts = nameLower.split(' - ');
-          if (parts.length > 1) {
-            const shortName = parts[1].trim();
-            if (shortName && shortName.length > 3) {
-              this.servicesLookup[shortName] = service;
-            }
-          }
+        // Index by exact name (case-insensitive)
+        const nameLower = service.name.toLowerCase();
+        this.servicesByName[nameLower] = service;
+        
+        // Add service category
+        if (service.category) {
+          this.serviceCategories.add(service.category.toLowerCase());
         }
       });
       
-      console.log(`✅ Initialized service names lookup with ${Object.keys(this.servicesLookup).length} entries`);
+      console.log(`✅ Initialized services lookup with ${services.length} services`);
     } catch (error) {
       console.error('❌ Error initializing services lookup:', error);
     }
@@ -62,35 +64,45 @@ class ScanConversationTool extends StructuredTool {
     
     try {
       // Make sure we have services lookup initialized
-      if (!this.servicesLookup) {
+      if (!this.servicesById) {
         await this.initializeServices();
       }
       
-      // Find service mentions in the message
-      const mentionedServices = this.findServiceMentions(message);
-      console.log(`Found ${mentionedServices.length} service mentions in message`);
+      // Extract service IDs from the message using regex and service name matching
+      const mentionedServices = this.extractServiceIds(message);
+      console.log(`Found ${mentionedServices.length} service references in message`);
       
       // If analyze-only mode, just return the results without updating context
       if (analyzeOnly) {
         return {
           serviceMentions: mentionedServices,
-          message: `Found ${mentionedServices.length} service mentions (analyze-only mode)`
+          message: `Found ${mentionedServices.length} service references (analyze-only mode)`
         };
       }
       
       // Track mentions in context
       const trackedResults = [];
+      if (mentionedServices.length > 0) {
+        console.log(`🔍 Detected services in message:`);
+        mentionedServices.forEach(service => {
+          console.log(`   🔹 Service: "${service.serviceName}" (ID: ${service.id})`);
+        });
+      }
+      
       for (const mention of mentionedServices) {
         try {
-          const result = await trackServiceMention(mention.serviceName, this.context);
+          // Pass both service name and ID to ensure accurate tracking
+          const result = await trackServiceMention(mention.serviceName, this.context, mention.id);
           trackedResults.push({
             serviceName: mention.serviceName,
+            serviceId: mention.id,
             success: result
           });
         } catch (error) {
           console.error(`❌ Error tracking service mention: ${mention.serviceName}`, error);
           trackedResults.push({
             serviceName: mention.serviceName,
+            serviceId: mention.id,
             success: false,
             error: error.message
           });
@@ -116,56 +128,68 @@ class ScanConversationTool extends StructuredTool {
     }
   }
   
-  // Find service mentions in a message
-  findServiceMentions(message) {
-    if (!message || !this.servicesLookup) {
+  // Extract service IDs from the message using regex and service name matching
+  extractServiceIds(message) {
+    if (!message || !this.servicesById) {
       return [];
     }
     
-    const messageLower = message.toLowerCase();
-    const mentions = [];
+    const serviceReferences = [];
+    const processedIds = new Set();
     
-    // Check for exact matches first
-    for (const [serviceName, service] of Object.entries(this.servicesLookup)) {
-      if (messageLower.includes(serviceName)) {
-        mentions.push({
-          serviceName: service.name,
-          id: service.id,
-          match: 'exact',
-          matchedOn: serviceName
+    // Check for explicit service IDs (both service:X and service:X-YYYY formats)
+    const serviceIdPattern = /(service:\d+(?:-\d+)?)/g;
+    const serviceIdMatches = [...message.matchAll(serviceIdPattern)];
+    
+    // Extract all service IDs mentioned directly in the text
+    for (const match of serviceIdMatches) {
+      const serviceId = match[1];
+      if (!processedIds.has(serviceId)) {
+        const service = this.servicesById[serviceId];
+        serviceReferences.push({
+          id: serviceId,
+          serviceName: service ? service.name : `Service ${serviceId}`,
+          type: 'explicit-id'
         });
+        processedIds.add(serviceId);
       }
     }
     
-    // If no exact matches, look for partial matches using tokenization
-    if (mentions.length === 0) {
-      const words = messageLower.split(/\s+/);
+    // Check the message for service names from our service list
+    if (message && this.servicesByName) {
+      const messageLower = message.toLowerCase();
       
-      for (const word of words) {
-        if (word.length < 4) continue; // Skip short words
-        
-        for (const [serviceName, service] of Object.entries(this.servicesLookup)) {
-          if (serviceName.includes(word)) {
-            // Add if not already added
-            if (!mentions.some(m => m.id === service.id)) {
-              mentions.push({
-                serviceName: service.name,
-                id: service.id,
-                match: 'partial',
-                matchedOn: word
-              });
-            }
-          }
+      // Check each service in our service list
+      Object.entries(this.servicesByName).forEach(([serviceName, service]) => {
+        // Skip if already processed
+        if (processedIds.has(service.id)) {
+          return;
         }
-      }
+        
+        // Check if service name is in the message
+        if (messageLower.includes(serviceName)) {
+          serviceReferences.push({
+            id: service.id,
+            serviceName: service.name,
+            type: 'name-match'
+          });
+          processedIds.add(service.id);
+        }
+        
+        // Also check common variations (e.g., "lashes dense" for "Lashes - Full Set - Dense")
+        const simplifiedName = service.name.toLowerCase().replace(/\s*-\s*/g, ' ');
+        if (simplifiedName !== serviceName && messageLower.includes(simplifiedName)) {
+          serviceReferences.push({
+            id: service.id,
+            serviceName: service.name,
+            type: 'simplified-name-match'
+          });
+          processedIds.add(service.id);
+        }
+      });
     }
     
-    // Sort mentions by match type (exact first, then partial)
-    return mentions.sort((a, b) => {
-      if (a.match === 'exact' && b.match !== 'exact') return -1;
-      if (a.match !== 'exact' && b.match === 'exact') return 1;
-      return 0;
-    });
+    return serviceReferences;
   }
   
   // Helper method to track tool usage in context memory

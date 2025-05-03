@@ -93,7 +93,8 @@ function createNewMCPContext(sessionId, isAdmin = false) {
     tools: isAdmin
       ? ["lookupUser", "createContact", "listServices", "getServiceInfo", "getAvailableSlots", "bookAppointment", "storeUser", "suggestServices", "scanConversation"] 
       : ["lookupUser", "listServices", "getServiceInfo", "getAvailableSlots", "bookAppointment", "storeUser", "suggestServices", "scanConversation"],
-    history: []
+    history: [],
+    detectedServiceIds: [] // Store service IDs detected in the conversation
   };
 }
 
@@ -296,11 +297,31 @@ io.on('connection', (socket) => {
         
         // Scan the message for service mentions
         const scanResult = await scanTool._call({ message: messageContent });
-        console.log(`🔍 Scanned message for service mentions: ${
-          scanResult.serviceMentions.length > 0 
-            ? `found ${scanResult.serviceMentions.length} mentions` 
-            : 'no services mentioned'
-        }`);
+        
+        if (scanResult.serviceMentions.length > 0) {
+          console.log(`🔍 Scanned message for service mentions: found ${scanResult.serviceMentions.length} mentions`);
+          // Log each detected service for debugging
+          scanResult.serviceMentions.forEach(mention => {
+            console.log(`   - Service: ${mention.serviceName}, ID: ${mention.id}`);
+          });
+          
+          // Update the context with detected service IDs for future reference
+          if (!context.detectedServiceIds) {
+            context.detectedServiceIds = [];
+          }
+          
+          // Add new detected IDs to the list, avoiding duplicates
+          scanResult.serviceMentions.forEach(mention => {
+            if (!context.detectedServiceIds.includes(mention.id)) {
+              context.detectedServiceIds.push(mention.id);
+            }
+          });
+          
+          // Update the context in the map
+          mcpContexts.set(sessionId, context);
+        } else {
+          console.log(`🔍 Scanned message for service mentions: no services mentioned`);
+        }
       } catch (error) {
         console.error('❌ Error scanning message for service mentions:', error);
         // Non-critical error, continue with chat processing
@@ -382,6 +403,23 @@ ${messageContent}`;
           
           if (scanResult.serviceMentions.length > 0) {
             console.log(`🔍 Found ${scanResult.serviceMentions.length} service mentions in assistant response`);
+            
+            // Log each detected service for debugging
+            scanResult.serviceMentions.forEach(mention => {
+              console.log(`   - Service: ${mention.serviceName}, ID: ${mention.id}`);
+            });
+            
+            // Update the context with detected service IDs for future reference too
+            if (!context.detectedServiceIds) {
+              context.detectedServiceIds = [];
+            }
+            
+            // Add new detected IDs to the list, avoiding duplicates
+            scanResult.serviceMentions.forEach(mention => {
+              if (!context.detectedServiceIds.includes(mention.id)) {
+                context.detectedServiceIds.push(mention.id);
+              }
+            });
             
             // We found services in the assistant response - track them for future reference
             if (!context.memory.assistantMentionedServices) {
