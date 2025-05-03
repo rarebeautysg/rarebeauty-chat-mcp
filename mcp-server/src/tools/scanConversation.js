@@ -117,6 +117,7 @@ class ScanConversationTool extends StructuredTool {
         });
       }
       
+      // Update local context only, not global mcpContext
       for (const mention of mentionedServices) {
         try {
           // Pass both service name and ID to ensure accurate tracking
@@ -126,6 +127,15 @@ class ScanConversationTool extends StructuredTool {
             serviceId: mention.id,
             success: result
           });
+          
+          // Ensure this service is in the detectedServiceIds array
+          if (!this.context.detectedServiceIds) {
+            this.context.detectedServiceIds = [];
+          }
+          if (!this.context.detectedServiceIds.includes(mention.id)) {
+            this.context.detectedServiceIds.push(mention.id);
+            console.log(`✅ Added service ID ${mention.id} to detectedServiceIds`);
+          }
         } catch (error) {
           console.error(`❌ Error tracking service mention: ${mention.serviceName}`, error);
           trackedResults.push({
@@ -138,7 +148,7 @@ class ScanConversationTool extends StructuredTool {
       }
       
       // Track tool usage in memory
-      this._trackToolUsage(`Found and tracked ${mentionedServices.length} service mentions`);
+      this._trackToolUsage(`Found and tracked ${mentionedServices.length} service mentions in local context`);
       
       return {
         serviceMentions: mentionedServices,

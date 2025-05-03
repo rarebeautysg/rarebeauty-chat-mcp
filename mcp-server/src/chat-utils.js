@@ -130,6 +130,9 @@ async function getOrCreateExecutor(sessionId, isAdmin = false) {
   
   const context = mcpContexts.get(sessionId);
   
+  // Ensure sessionId is set in context
+  context.sessionId = sessionId;
+  
   // Set identity in context if needed
   if (!context.identity || !context.identity.role) {
     context.identity = {
@@ -320,30 +323,6 @@ async function getOrCreateExecutor(sessionId, isAdmin = false) {
               name: toolName,
               content: typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult)
             });
-            
-            // Special handling for lookupUser tool - ensure context is synced with global store
-            if (toolName === 'lookupUser' && global.mcpContexts && global.mcpContexts.has(sessionId)) {
-              const updatedGlobalContext = global.mcpContexts.get(sessionId);
-              
-              // Check if context has been updated with user info
-              if (updatedGlobalContext.identity?.user_id || updatedGlobalContext.memory?.user_info?.resourceName) {
-                console.log(`✅ Found updated context in global store after lookupUser tool`);
-                
-                // Sync with our local context
-                if (updatedGlobalContext.identity?.user_id) {
-                  context.identity = context.identity || {};
-                  context.identity.user_id = updatedGlobalContext.identity.user_id;
-                  context.identity.persona = updatedGlobalContext.identity.persona || "returning_customer";
-                  console.log(`✅ Synced identity.user_id from global context: ${context.identity.user_id}`);
-                }
-                
-                if (updatedGlobalContext.memory?.user_info) {
-                  context.memory = context.memory || {};
-                  context.memory.user_info = { ...updatedGlobalContext.memory.user_info };
-                  console.log(`✅ Synced memory.user_info from global context`);
-                }
-              }
-            }
           } catch (error) {
             console.error(`Error executing tool ${toolName}:`, error);
             toolResponses.push({
@@ -357,6 +336,77 @@ async function getOrCreateExecutor(sessionId, isAdmin = false) {
         
         // Add tool responses to messages
         const finalMessages = [...messages, result, ...toolResponses];
+        
+        // Persist to DynamoDB using memoryService and global.mcpContexts for persistence
+        if (global.mcpContexts && sessionId) {
+          console.log(`🔍 DEBUG: Context structure before saving:`);
+          console.log(`  - context.identity: ${JSON.stringify(context.identity, null, 2).substring(0, 100)}...`);
+          console.log(`  - context.memory.user_info: ${context.memory?.user_info ? 'present' : 'null or undefined'}`);
+          
+          // Make sure we pull user_id from the right place
+          let resourceName = null;
+          
+          // Check for resourceName in identity.user_id first
+          if (context.identity?.user_id) {
+            resourceName = context.identity.user_id;
+            console.log(`📋 Using resourceName ${resourceName} from identity.user_id for memory persistence`);
+          } 
+          // If not found there, check memory.user_info
+          else if (context.memory?.user_info?.resourceName) {
+            resourceName = context.memory.user_info.resourceName;
+            console.log(`📋 Using resourceName ${resourceName} from memory.user_info for memory persistence`);
+            
+            // Make sure identity.user_id is also set
+            if (!context.identity) context.identity = {};
+            context.identity.user_id = resourceName;
+          } else {
+            console.warn(`⚠️ No resourceName found in context identity, checking memory.user_info`);
+          }
+          
+          // Add the session to the context for tracking
+          context.sessionId = sessionId;
+          
+          // If we have a resourceName, use memory service to save properly
+          if (resourceName) {
+            try {
+              const memoryService = require('./services/memoryService');
+              
+              // Ensure the session-to-resource mapping is updated
+              memoryService.setSessionToResourceMapping(sessionId, resourceName);
+              
+              // Use the memory service to save the context
+              const result = await memoryService.saveMemory(sessionId, context);
+              
+              if (result) {
+                console.log(`💾 Persisted context memory for session ${sessionId}`);
+              } else {
+                console.warn(`⚠️ Failed to persist context memory for session ${sessionId}`);
+                // Try a direct save with resourceName as fallback
+                console.log(`🔄 Attempting direct save with resourceName: ${resourceName}`);
+                try {
+                  const directResult = await memoryService.saveMemoryByResourceName(sessionId, resourceName, context);
+                  if (!directResult) {
+                    console.warn(`❌ Direct save with resourceName also failed`);
+                    // Last resort: just store in global memory without DynamoDB
+                    global.mcpContexts.set(sessionId, context);
+                  }
+                } catch (directError) {
+                  console.error(`❌ Error in direct save:`, directError);
+                  // Last resort: just store in global memory without DynamoDB
+                  global.mcpContexts.set(sessionId, context);
+                }
+              }
+            } catch (error) {
+              console.error(`❌ Error persisting context memory:`, error);
+              
+              // Fallback to just storing in global memory
+              global.mcpContexts.set(sessionId, context);
+            }
+          } else {
+            // Fallback to global.mcpContexts directly if no resourceName found
+            global.mcpContexts.set(sessionId, context);
+          }
+        }
         
         // Get final response
         const finalResult = await llm.invoke(finalMessages);

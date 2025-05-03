@@ -237,12 +237,93 @@ class BookAppointmentTool extends StructuredTool {
       if (time) this.context.memory.preferred_time = time;
     }
     
-    // Check required fields
-    if (!name || !mobile || !resourceName || !serviceIds) {
-      console.log('❌ Missing required booking fields:', { name, mobile, resourceName, serviceIds });
+    // Process service IDs and add validation/fallback mechanism
+    let serviceIdArray = [];
+    let serviceIdsFromAI = [];
+    
+    if (serviceIds) {
+      // Check if serviceIds is an array or comma-separated string
+      if (Array.isArray(serviceIds)) {
+        serviceIdsFromAI = serviceIds;
+      } else {
+        serviceIdsFromAI = serviceIds.split(',').map(id => id.trim());
+      }
+    }
+    
+    // Log original service IDs from the AI
+    console.log(`📋 Original service IDs provided by AI: "${serviceIds}"`);
+    
+    // Check if we have detected service IDs in the context (local context only)
+    let contextServiceIds = [];
+    if (this.context?.detectedServiceIds?.length > 0) {
+      contextServiceIds = this.context.detectedServiceIds;
+      console.log(`🔍 Found ${contextServiceIds.length} detected service IDs in local context: ${JSON.stringify(contextServiceIds)}`);
+    }
+    
+    // Validate the service IDs from AI against known services
+    if (serviceIdsFromAI.length > 0) {
+      // Only use service IDs from AI if they match our detected services or are in valid format
+      serviceIdArray = serviceIdsFromAI.filter(id => {
+        // Check if the ID is in our context's detected services
+        if (contextServiceIds.includes(id)) {
+          console.log(`✅ Using AI-provided service ID ${id} that matches a detected service`);
+          return true;
+        }
+        
+        // Check if it's a valid service ID format
+        if (id.startsWith('service:') || /^\d+(-\d+)?$/.test(id)) {
+          console.log(`✅ Using AI-provided service ID ${id} with valid format`);
+          return true;
+        }
+        
+        console.log(`⚠️ Ignoring invalid AI-provided service ID: ${id}`);
+        return false;
+      });
+    }
+    
+    // If none of the AI-provided IDs are valid, use the detected service IDs from context
+    if (serviceIdArray.length === 0 && contextServiceIds.length > 0) {
+      console.log(`🔄 Using ${contextServiceIds.length} service IDs from context instead of invalid AI inputs`);
+      serviceIdArray = contextServiceIds;
+    }
+    
+    // If we still don't have any service IDs, check for highlighted services
+    if (serviceIdArray.length === 0) {
+      const highlightedServices = this.context?.memory?.highlightedServices || [];
+      if (highlightedServices.length > 0) {
+        serviceIdArray = highlightedServices.map(s => s.id);
+        console.log(`🔄 Using ${serviceIdArray.length} service IDs from highlighted services: ${JSON.stringify(serviceIdArray)}`);
+      }
+    }
+    
+    // If we still don't have any service IDs, return an error
+    if (serviceIdArray.length === 0) {
+      console.error('❌ No service IDs provided or found in context');
       return JSON.stringify({
         success: false,
-        error: "Missing required fields. Need name, mobile, resourceName, and serviceIds"
+        error: 'No service IDs provided or found in context',
+        message: 'Please specify which service(s) you would like to book.'
+      });
+    }
+    
+    console.log(`🔄 Processing service IDs: ${JSON.stringify(serviceIdArray)}`);
+    
+    // Validate contact information
+    if (!name) {
+      console.error('❌ Contact name is required');
+      return JSON.stringify({
+        success: false,
+        error: 'Name is required',
+        message: 'Please provide a name for the booking.'
+      });
+    }
+    
+    if (!mobile) {
+      console.error('❌ Contact mobile number is required');
+      return JSON.stringify({
+        success: false,
+        error: 'Mobile number is required',
+        message: 'Please provide a mobile number for the booking.'
       });
     }
 
@@ -279,34 +360,6 @@ class BookAppointmentTool extends StructuredTool {
     }
 
     console.log('📅 Booking appointment with inputs:', inputs);
-    
-    // Fix for comma-separated service IDs
-    let serviceIdArray = [];
-    if (Array.isArray(serviceIds)) {
-      // Process each array element for potential comma-separated values
-      serviceIds.forEach(id => {
-        if (typeof id === 'string' && id.includes(',')) {
-          // Split comma-separated values and add them individually
-          serviceIdArray.push(...id.split(',').map(s => s.trim()));
-        } else {
-          serviceIdArray.push(id);
-        }
-      });
-    } else if (typeof serviceIds === 'string') {
-      // Handle a single string that might contain comma-separated values
-      serviceIdArray = serviceIds.includes(',') ? 
-        serviceIds.split(',').map(s => s.trim()) : 
-        [serviceIds];
-    }
-    
-    console.log(`🔄 Processing service IDs: ${JSON.stringify(serviceIdArray)}`);
-    
-    if (serviceIdArray.length === 0) {
-        return JSON.stringify({
-          success: false,
-          error: "At least one service ID is required"
-        });
-    }
     
     // Respect service IDs - don't try to find duplicates early
     // Each ID is important and might be intended, even if they look similar
@@ -356,12 +409,6 @@ class BookAppointmentTool extends StructuredTool {
       // Get all services using the consolidated API
       const allServices = await getAllFormattedServices();
 
-      // Look for previously detected service IDs in the context
-      const detectedIds = this.context?.detectedServiceIds || [];
-      if (detectedIds.length > 0) {
-        console.log(`🔍 Found ${detectedIds.length} previously detected service IDs in context`);
-      }
-
       // Process service IDs and calculate duration if not provided
       for (const serviceId of serviceIdArray) {
         // Keep original serviceId as provided by the AI
@@ -369,19 +416,40 @@ class BookAppointmentTool extends StructuredTool {
         let serviceName = "Unknown Service";
 
         // Log the service ID for debugging
-        console.log(`🔍 Using service ID as provided by AI: ${serviceId}`);
-
-        // Try to find service information for display and duration calculation
-        const matchedService = allServices.find(s => s.id === serviceId);
-        if (matchedService) {
-          serviceName = matchedService.name;
-          console.log(`✅ Found service information: ${serviceName} (${serviceId})`);
-        } else {
-          // We will still use the ID exactly as provided by the AI even if we can't find it
-          console.log(`⚠️ Using service ID ${serviceId} as provided by AI (service information not found)`);
+        console.log(`🔍 Using service ID as provided: ${serviceId}`);
+        
+        // Make sure the service ID has the correct prefix
+        if (!matchedServiceId.startsWith('service:')) {
+          // Try to validate the ID format
+          if (/^\d+(-\d+)?$/.test(matchedServiceId)) {
+            // Add the service: prefix
+            matchedServiceId = `service:${matchedServiceId}`;
+            console.log(`✅ Added service: prefix to ID: ${matchedServiceId}`);
+          }
         }
 
-        // Always use the exact service ID provided by the AI
+        // Try to find service information for display and duration calculation
+        let matchedService = allServices.find(s => s.id === matchedServiceId);
+        if (!matchedService) {
+          // Try to match by normalized ID format
+          const normalizedId = matchedServiceId.replace(/^service:/, '');
+          matchedService = allServices.find(s => s.id.replace(/^service:/, '') === normalizedId);
+          
+          if (matchedService) {
+            matchedServiceId = matchedService.id; // Use the correctly formatted ID
+            console.log(`✅ Found service with normalized ID match: ${matchedService.name} (${matchedService.id})`);
+          }
+        }
+        
+        if (matchedService) {
+          serviceName = matchedService.name;
+          console.log(`✅ Found service information: ${serviceName} (${matchedServiceId})`);
+        } else {
+          // We will still use the ID as provided, but log a warning
+          console.log(`⚠️ Using service ID ${matchedServiceId} as provided (service information not found)`);
+        }
+
+        // Store the service ID and name
         processedServiceIds.push(matchedServiceId);
         serviceNames.push(serviceName);
 

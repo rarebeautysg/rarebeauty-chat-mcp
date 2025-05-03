@@ -27,7 +27,16 @@ class DynamoDBMemory {
     }
     
     this.client = new DynamoDB(clientOptions);
-    this.docClient = DynamoDBDocument.from(this.client);
+    
+    // Create DynamoDBDocument client with proper marshalling options
+    this.docClient = DynamoDBDocument.from(this.client, {
+      marshallOptions: {
+        // Always remove undefined values to prevent DynamoDB errors
+        removeUndefinedValues: true,
+        // Convert empty values to null for better consistency
+        convertEmptyValues: true
+      }
+    });
     
     console.log(`📝 Initialized DynamoDB memory adapter with table: ${this.tableName}`);
   }
@@ -106,6 +115,36 @@ class DynamoDBMemory {
   }
   
   /**
+   * Clean object for DynamoDB storage (remove undefined values and circular references)
+   * @param {Object} obj The object to clean
+   * @returns {Object} Cleaned object safe for DynamoDB
+   */
+  _sanitizeForDynamoDB(obj) {
+    if (!obj) return obj;
+    
+    // Handle simple types
+    if (typeof obj !== 'object') return obj;
+    if (obj === null) return null;
+    
+    // Handle arrays
+    if (Array.isArray(obj)) {
+      return obj
+        .filter(item => item !== undefined)
+        .map(item => this._sanitizeForDynamoDB(item));
+    }
+    
+    // Handle plain objects
+    const cleaned = {};
+    for (const [key, value] of Object.entries(obj)) {
+      if (value !== undefined) {
+        cleaned[key] = this._sanitizeForDynamoDB(value);
+      }
+    }
+    
+    return cleaned;
+  }
+  
+  /**
    * Save context memory
    * @param {string} resourceName The resource name to use
    * @param {Object} memory The memory data to save
@@ -113,12 +152,21 @@ class DynamoDBMemory {
    */
   async saveMemory(resourceName, memory) {
     try {
+      // Clean memory object to remove undefined values and circular references
+      const cleanedMemory = this._sanitizeForDynamoDB(memory);
+      
+      console.log(`🧹 Sanitized memory object for DynamoDB storage`);
+      
       await this.docClient.put({
         TableName: this.tableName,
         Item: {
           resourceName,
-          data: memory,
+          data: cleanedMemory,
           updatedAt: new Date().toISOString()
+        },
+        // Enable removeUndefinedValues to handle any remaining undefined values
+        marshallOptions: {
+          removeUndefinedValues: true
         }
       });
       

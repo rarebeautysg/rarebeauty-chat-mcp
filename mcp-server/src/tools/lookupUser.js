@@ -112,9 +112,6 @@ export class LookupUserTool extends StructuredTool {
     this.context = context;
     this.sessionId = sessionId;
     
-    // Store global mcpContexts reference
-    this.mcpContexts = global.mcpContexts;
-    
     // Warm the cache on initialization
     getContacts().catch(err => console.error('Failed to warm contacts cache:', err));
   }
@@ -206,45 +203,22 @@ export class LookupUserTool extends StructuredTool {
   
   // Helper method to update context with user information
   updateContext(contact) {
-    if (!this.context || !this.context.memory) return;
+    if (!this.context) {
+      console.error('❌ No context provided to updateContext');
+      return;
+    }
     
     console.log(`📋 Updating context for resourceName: ${contact.resourceName}, session: ${this.sessionId}`);
     
-    try {
-      // Direct approach to update MCP context in global store
-      if (global.mcpContexts && global.mcpContexts instanceof Map && this.sessionId) {
-        const globalContext = global.mcpContexts.get(this.sessionId);
-        if (globalContext) {
-          console.log(`🔄 Updating global MCP context for session ${this.sessionId}`);
-          
-          // Update identity
-          if (!globalContext.identity) {
-            globalContext.identity = {};
-          }
-          globalContext.identity.user_id = contact.resourceName;
-          globalContext.identity.persona = "returning_customer";
-          
-          // Update memory
-          if (!globalContext.memory) {
-            globalContext.memory = {};
-          }
-          globalContext.memory.user_info = {
-            resourceName: contact.resourceName,
-            name: contact.name,
-            mobile: contact.mobile,
-            updatedAt: new Date().toISOString()
-          };
-          
-          // Save back to global store
-          global.mcpContexts.set(this.sessionId, globalContext);
-          console.log(`✅ Updated global MCP context with resourceName ${contact.resourceName}`);
-        }
-      }
-    } catch (globalError) {
-      console.error('❌ Error updating global context:', globalError);
+    // Add sessionId to context for tracking
+    this.context.sessionId = this.sessionId;
+    
+    // Ensure memory exists
+    if (!this.context.memory) {
+      this.context.memory = {};
     }
     
-    // Update the user_info in the context
+    // Update the user_info in the local context first
     this.context.memory.user_info = {
       resourceName: contact.resourceName,
       name: contact.name,
@@ -263,6 +237,24 @@ export class LookupUserTool extends StructuredTool {
     
     // Explicitly log the updated identity
     console.log(`✅ Set identity.user_id to ${contact.resourceName}`);
+    
+    // Use the memory service to update the session-to-resource mapping
+    try {
+      const memoryService = require('../services/memoryService');
+      memoryService.setSessionToResourceMapping(this.sessionId, contact.resourceName);
+    } catch (error) {
+      console.error('❌ Error updating session-to-resource mapping:', error);
+    }
+    
+    // Save to global.mcpContexts ONLY for DynamoDB persistence
+    try {
+      if (global.mcpContexts && global.mcpContexts instanceof Map && this.sessionId) {
+        global.mcpContexts.set(this.sessionId, this.context);
+        console.log(`📋 Saved to global.mcpContexts for DynamoDB persistence with resourceName: ${contact.resourceName}`);
+      }
+    } catch (error) {
+      console.error('❌ Error saving to global.mcpContexts:', error);
+    }
     
     // Track tool usage in memory
     if (!this.context.memory.tool_usage) {

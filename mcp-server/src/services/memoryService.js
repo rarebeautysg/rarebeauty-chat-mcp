@@ -56,10 +56,25 @@ class MemoryService {
       return defaultResourceName;
     }
     
-    // Check memory.identity.user_id
+    console.log(`🔍 DEBUG: Memory object to save:`);
+    console.log(`  - memoryToSave.identity: ${JSON.stringify(memory.identity || {}, null, 2).substring(0, 100)}...`);
+    if (memory.memory?.user_info) {
+      console.log(`  - memoryToSave.memory.user_info: ${JSON.stringify(memory.memory.user_info, null, 2).substring(0, 100)}...`);
+    }
+    
+    // Check memory.identity.user_id (most common)
     if (memory?.identity?.user_id) {
       console.log(`📋 Found resourceName in memory.identity.user_id: ${memory.identity.user_id}`);
       return memory.identity.user_id;
+    }
+    
+    // Check for sessionId property which may have been set by lookupUser
+    if (memory?.sessionId) {
+      const mappedResourceName = sessionToResourceMap.get(memory.sessionId);
+      if (mappedResourceName) {
+        console.log(`📋 Found resourceName from sessionId mapping: ${mappedResourceName}`);
+        return mappedResourceName;
+      }
     }
     
     // Check memory.memory.user_info.resourceName
@@ -86,6 +101,7 @@ class MemoryService {
     } else {
       console.log('⚠️ No resourceName found in memory, searched:');
       console.log('  - memory.identity.user_id');
+      console.log('  - memory.sessionId → sessionToResourceMap');
       console.log('  - memory.memory.user_info.resourceName');
       console.log('  - memory.user_info.resourceName');
       console.log('  - memory.resourceName');
@@ -158,10 +174,30 @@ class MemoryService {
       memory.lastSessionId = sessionId;
     }
     
-    // Store by resourceName
+    // Try to store using DynamoDB if enabled
     if (this.isUsingDynamo && this.dynamoAdapter) {
-      return await this.dynamoAdapter.saveMemory(resourceName, memory);
+      try {
+        const result = await this.dynamoAdapter.saveMemory(resourceName, memory);
+        if (result) {
+          console.log(`💾 Successfully saved memory to DynamoDB for ${resourceName}`);
+          // Also update in-memory as a cache
+          inMemoryStorage.set(resourceName, memory);
+          return true;
+        } else {
+          console.warn(`⚠️ DynamoDB save failed, falling back to in-memory storage for ${resourceName}`);
+          // Fall back to in-memory storage
+          inMemoryStorage.set(resourceName, memory);
+          return true;
+        }
+      } catch (error) {
+        console.error(`❌ Error saving to DynamoDB for ${resourceName}:`, error);
+        console.log(`🔄 Falling back to in-memory storage for ${resourceName}`);
+        // Fall back to in-memory storage
+        inMemoryStorage.set(resourceName, memory);
+        return true;
+      }
     } else {
+      // Just use in-memory storage
       inMemoryStorage.set(resourceName, memory);
       return true;
     }
@@ -190,8 +226,11 @@ class MemoryService {
       return this.saveMemoryByResourceName(sessionId, resourceName, memory);
     }
     
+    // Check if the memory object has a sessionId property (can help with debugging)
+    const memorySessionId = memory.sessionId || sessionId;
+    
     // If we don't have a resourceName in the memory object, but we know it from session mapping
-    const mappedResourceName = sessionToResourceMap.get(sessionId);
+    const mappedResourceName = sessionToResourceMap.get(memorySessionId);
     if (mappedResourceName) {
       console.log(`📋 Using mapped resourceName ${mappedResourceName} from session mapping`);
       
@@ -201,7 +240,7 @@ class MemoryService {
       }
       memory.identity.user_id = mappedResourceName;
       
-      return this.saveMemoryByResourceName(sessionId, mappedResourceName, memory);
+      return this.saveMemoryByResourceName(memorySessionId, mappedResourceName, memory);
     }
     
     // No resourceName found, cannot save
