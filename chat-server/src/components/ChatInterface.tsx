@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { MessageBubble } from './MessageBubble';
 import ChatInput from './ChatInput';
+import TypingIndicator from './TypingIndicator';
+import { useSocket } from '../hooks/useSocket';
 
 // Define Message type here directly instead of importing to avoid circular dependency
 export interface Message {
@@ -24,6 +26,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
 }) => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [sessionId, setSessionId] = useState<string>('');
+  const { isTyping } = useSocket();
 
   // Load session ID from localStorage on component mount
   useEffect(() => {
@@ -41,10 +44,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     }
   }, [sessionId]);
 
-  // Scroll to bottom whenever messages change
+  // Scroll to bottom whenever messages change or typing state changes
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [messages, isTyping]);
 
   // Expose updateSessionId to parent components
   const updateSessionId = (newId: string) => {
@@ -75,7 +78,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
               </div>
             )}
             {messages.length > 1 && (
-              <div className="p-3 pt-0" ref={messagesEndRef}>
+              <div className="p-3 pt-0">
                 {messages.slice(1).map((message, index) => (
                   <MessageBubble
                     key={message.id}
@@ -83,6 +86,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                     isLastMessage={index === messages.length - 2 && isLoading}
                   />
                 ))}
+                <TypingIndicator visible={isTyping || isLoading} />
+                <div ref={messagesEndRef} />
               </div>
             )}
           </div>

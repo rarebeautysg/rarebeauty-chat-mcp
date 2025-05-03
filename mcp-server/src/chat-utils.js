@@ -320,6 +320,30 @@ async function getOrCreateExecutor(sessionId, isAdmin = false) {
               name: toolName,
               content: typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult)
             });
+            
+            // Special handling for lookupUser tool - ensure context is synced with global store
+            if (toolName === 'lookupUser' && global.mcpContexts && global.mcpContexts.has(sessionId)) {
+              const updatedGlobalContext = global.mcpContexts.get(sessionId);
+              
+              // Check if context has been updated with user info
+              if (updatedGlobalContext.identity?.user_id || updatedGlobalContext.memory?.user_info?.resourceName) {
+                console.log(`✅ Found updated context in global store after lookupUser tool`);
+                
+                // Sync with our local context
+                if (updatedGlobalContext.identity?.user_id) {
+                  context.identity = context.identity || {};
+                  context.identity.user_id = updatedGlobalContext.identity.user_id;
+                  context.identity.persona = updatedGlobalContext.identity.persona || "returning_customer";
+                  console.log(`✅ Synced identity.user_id from global context: ${context.identity.user_id}`);
+                }
+                
+                if (updatedGlobalContext.memory?.user_info) {
+                  context.memory = context.memory || {};
+                  context.memory.user_info = { ...updatedGlobalContext.memory.user_info };
+                  console.log(`✅ Synced memory.user_info from global context`);
+                }
+              }
+            }
           } catch (error) {
             console.error(`Error executing tool ${toolName}:`, error);
             toolResponses.push({

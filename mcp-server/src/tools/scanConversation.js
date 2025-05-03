@@ -8,6 +8,64 @@ const ScanConversationSchema = z.object({
   analyzeOnly: z.boolean().optional().describe("If true, only analyze but don't save to context")
 });
 
+// Singleton state for services lookup
+const servicesLookup = {
+  servicesById: null,
+  servicesByName: null,
+  serviceCategories: null,
+  initialized: false,
+  initializing: false
+};
+
+// Initialize services once for all instances
+async function initializeServicesOnce() {
+  // If already initializing, wait for it to complete
+  if (servicesLookup.initializing) {
+    while (servicesLookup.initializing) {
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    return;
+  }
+  
+  // If already initialized, return immediately
+  if (servicesLookup.initialized) {
+    return;
+  }
+  
+  // Set initializing flag
+  servicesLookup.initializing = true;
+  
+  try {
+    const services = await getAllFormattedServices();
+    
+    // Create simple lookup maps by ID and name
+    servicesLookup.servicesById = {};
+    servicesLookup.servicesByName = {};
+    servicesLookup.serviceCategories = new Set();
+    
+    services.forEach(service => {
+      // Index by ID
+      servicesLookup.servicesById[service.id] = service;
+      
+      // Index by exact name (case-insensitive)
+      const nameLower = service.name.toLowerCase();
+      servicesLookup.servicesByName[nameLower] = service;
+      
+      // Add service category
+      if (service.category) {
+        servicesLookup.serviceCategories.add(service.category.toLowerCase());
+      }
+    });
+    
+    servicesLookup.initialized = true;
+    console.log(`✅ Initialized services lookup with ${services.length} services`);
+  } catch (error) {
+    console.error('❌ Error initializing services lookup:', error);
+  } finally {
+    servicesLookup.initializing = false;
+  }
+}
+
 /**
  * Tool to scan conversation messages for service mentions
  */
@@ -22,39 +80,9 @@ class ScanConversationTool extends StructuredTool {
     this.context = context;
     this.sessionId = sessionId;
     
-    // Initialize service names lookup
-    this.servicesById = null;
-    this.servicesByName = null;
-    this.serviceCategories = null;
-    this.initializeServices();
-  }
-  
-  async initializeServices() {
-    try {
-      const services = await getAllFormattedServices();
-      
-      // Create simple lookup maps by ID and name
-      this.servicesById = {};
-      this.servicesByName = {};
-      this.serviceCategories = new Set();
-      
-      services.forEach(service => {
-        // Index by ID
-        this.servicesById[service.id] = service;
-        
-        // Index by exact name (case-insensitive)
-        const nameLower = service.name.toLowerCase();
-        this.servicesByName[nameLower] = service;
-        
-        // Add service category
-        if (service.category) {
-          this.serviceCategories.add(service.category.toLowerCase());
-        }
-      });
-      
-      console.log(`✅ Initialized services lookup with ${services.length} services`);
-    } catch (error) {
-      console.error('❌ Error initializing services lookup:', error);
+    // Initialize services if needed
+    if (!servicesLookup.initialized && !servicesLookup.initializing) {
+      initializeServicesOnce();
     }
   }
   
@@ -64,8 +92,8 @@ class ScanConversationTool extends StructuredTool {
     
     try {
       // Make sure we have services lookup initialized
-      if (!this.servicesById) {
-        await this.initializeServices();
+      if (!servicesLookup.initialized) {
+        await initializeServicesOnce();
       }
       
       // Extract service IDs from the message using regex and service name matching
@@ -130,7 +158,7 @@ class ScanConversationTool extends StructuredTool {
   
   // Extract service IDs from the message using regex and service name matching
   extractServiceIds(message) {
-    if (!message || !this.servicesById) {
+    if (!message || !servicesLookup.servicesById) {
       return [];
     }
     
@@ -145,7 +173,7 @@ class ScanConversationTool extends StructuredTool {
     for (const match of serviceIdMatches) {
       const serviceId = match[1];
       if (!processedIds.has(serviceId)) {
-        const service = this.servicesById[serviceId];
+        const service = servicesLookup.servicesById[serviceId];
         serviceReferences.push({
           id: serviceId,
           serviceName: service ? service.name : `Service ${serviceId}`,
@@ -156,11 +184,11 @@ class ScanConversationTool extends StructuredTool {
     }
     
     // Check the message for service names from our service list
-    if (message && this.servicesByName) {
+    if (message && servicesLookup.servicesByName) {
       const messageLower = message.toLowerCase();
       
       // Check each service in our service list
-      Object.entries(this.servicesByName).forEach(([serviceName, service]) => {
+      Object.entries(servicesLookup.servicesByName).forEach(([serviceName, service]) => {
         // Skip if already processed
         if (processedIds.has(service.id)) {
           return;
@@ -215,6 +243,9 @@ class ScanConversationTool extends StructuredTool {
 function createScanConversationTool(context, sessionId) {
   return new ScanConversationTool(context, sessionId);
 }
+
+// Initialize services at module load time
+initializeServicesOnce();
 
 module.exports = {
   ScanConversationTool,

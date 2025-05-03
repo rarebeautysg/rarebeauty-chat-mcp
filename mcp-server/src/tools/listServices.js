@@ -63,14 +63,14 @@ async function fetchServicesFromSOHO() {
     console.log(`✅ Successfully fetched ${result.data.services.length} services from SOHO API`);
     
     // Log a few examples of service IDs for debugging
-    if (result.data.services.length > 0) {
-      console.log('📋 Sample service IDs from SOHO API:');
-      const sampleSize = Math.min(5, result.data.services.length);
-      for (let i = 0; i < result.data.services.length; i++) {
-        const service = result.data.services[i];
-        console.log(`   - ID: ${service.id}, Name: ${service.service}`);
-      }
-    }
+    // if (result.data.services.length > 0) {
+    //   console.log('📋 Sample service IDs from SOHO API:');
+    //   const sampleSize = Math.min(5, result.data.services.length);
+    //   for (let i = 0; i < result.data.services.length; i++) {
+    //     const service = result.data.services[i];
+    //     console.log(`   - ID: ${service.id}, Name: ${service.service}`);
+    //   }
+    // }
     
     return result.data.services;
   } catch (error) {
@@ -166,6 +166,10 @@ const categorizeServices = (services) => {
 // Get all formatted services - used by tools and other components
 async function getAllFormattedServices(forceRefresh = false) {
   const now = Date.now();
+  
+  // Add debug stack trace to see who's calling this function
+  const stackTrace = new Error().stack;
+  console.log(`📋 getAllFormattedServices called from: ${stackTrace.split('\n')[2]?.trim() || 'unknown'}`);
   
   // Check if we need to refresh the processed cache
   if (forceRefresh || processedServicesCache.length === 0 || now - processedLastFetched > CACHE_DURATION) {

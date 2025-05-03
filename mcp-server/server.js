@@ -8,6 +8,7 @@ const { v4: uuidv4 } = require('uuid');
 const jwt = require('jsonwebtoken');
 const path = require('path');
 const { transcribeAudio } = require('./src/services/audioTranscription');
+const memoryService = require('./src/services/memoryService');
 
 // Load environment variables from .env file
 console.log(`🔧 Loading environment from .env`);
@@ -18,6 +19,9 @@ console.log(`🔑 Auth token loaded:`, process.env.SOHO_AUTH_TOKEN ? 'Yes' : 'No
 
 // Import LLM integration
 const { executors, adminExecutors, toolResults } = require('./src/chat-utils');
+
+// Store shared tool instances
+const sharedTools = new Map();
 
 const app = express();
 const server = http.createServer(app);
@@ -71,8 +75,11 @@ const io = new Server(server, {
 });
 
 // Helper function to initialize a new MCP context
-function createNewMCPContext(sessionId, isAdmin = false) {
-  return {
+async function createNewMCPContext(sessionId, isAdmin = false) {
+  // Get any existing memory from persistent storage
+  const existingMemory = await memoryService.getMemory(sessionId);
+  
+  const newContext = {
     identity: {
       session_id: sessionId,
       persona: isAdmin ? "admin" : "customer",
@@ -82,7 +89,7 @@ function createNewMCPContext(sessionId, isAdmin = false) {
     instructions: isAdmin 
       ? "Help admin manage customer appointments, lookup customers, show services and add new contacts."
       : "Help customer book appointments and learn about services.",
-    memory: {
+    memory: existingMemory.memory || {
       user_info: null,
       last_selected_service: null,
       preferred_date: null,
@@ -96,6 +103,30 @@ function createNewMCPContext(sessionId, isAdmin = false) {
     history: [],
     detectedServiceIds: [] // Store service IDs detected in the conversation
   };
+  
+  // If we have identity info in the existing memory, preserve it
+  if (existingMemory.identity) {
+    newContext.identity = {
+      ...newContext.identity,
+      ...existingMemory.identity,
+      is_admin: isAdmin // Always respect the current admin status
+    };
+  }
+  
+  return newContext;
+}
+
+// Helper function to get or create a shared tool instance
+function getSharedTool(toolName, context, sessionId) {
+  const key = `${sessionId}:${toolName}`;
+  if (!sharedTools.has(key)) {
+    if (toolName === 'scanConversation') {
+      const { createScanConversationTool } = require('./src/tools/scanConversation');
+      sharedTools.set(key, createScanConversationTool(context, sessionId));
+    }
+    // Add other tool types as needed
+  }
+  return sharedTools.get(key);
 }
 
 // Socket connection handler
@@ -111,11 +142,14 @@ io.on('connection', (socket) => {
     console.log(`📝 Generated new session ID: ${sessionId}`);
   }
   
-  // Initialize MCP context if it doesn't exist
-  if (!mcpContexts.has(sessionId)) {
-    mcpContexts.set(sessionId, createNewMCPContext(sessionId));
-    console.log(`🧠 Created new MCP context for session ${sessionId}`);
-  }
+  // Initialize MCP context if it doesn't exist (async function)
+  (async () => {
+    if (!mcpContexts.has(sessionId)) {
+      const newContext = await createNewMCPContext(sessionId);
+      mcpContexts.set(sessionId, newContext);
+      console.log(`🧠 Created new MCP context for session ${sessionId}`);
+    }
+  })();
   
   // Store the socket by session ID
   sessionSockets.set(sessionId, socket);
@@ -128,15 +162,17 @@ io.on('connection', (socket) => {
     console.log(`🌟 Welcome message requested for session ${sessionId}`);
     const isAdmin = data.isAdmin === true;
     
-    // Update MCP context if admin status changed
+    // Update MCP context if admin status changed (async)
     if (mcpContexts.has(sessionId)) {
       const context = mcpContexts.get(sessionId);
       if (context.identity.is_admin !== isAdmin) {
-        mcpContexts.set(sessionId, createNewMCPContext(sessionId, isAdmin));
+        const newContext = await createNewMCPContext(sessionId, isAdmin);
+        mcpContexts.set(sessionId, newContext);
         console.log(`🧠 Reset MCP context for session ${sessionId} with admin=${isAdmin}`);
       }
     } else {
-      mcpContexts.set(sessionId, createNewMCPContext(sessionId, isAdmin));
+      const newContext = await createNewMCPContext(sessionId, isAdmin);
+      mcpContexts.set(sessionId, newContext);
     }
     
     // Update goals for this session
@@ -160,9 +196,27 @@ io.on('connection', (socket) => {
     console.log(`🔍 Loading customer for session ${sessionId}: ${data.resourceName}`);
     const isAdmin = data.isAdmin === true;
     
+    // Check if we already have a session for this resourceName
+    const existingSessionId = memoryService.getSessionIdByResourceName(data.resourceName);
+    
+    if (existingSessionId && existingSessionId !== sessionId) {
+      console.log(`🔄 Found existing session ${existingSessionId} for resourceName ${data.resourceName}, transferring memory`);
+      
+      // Get the memory from the existing session
+      const existingMemory = await memoryService.getMemory(existingSessionId);
+      
+      // Create a copy of the memory with the new session ID
+      if (existingMemory && Object.keys(existingMemory).length > 0) {
+        // Store the memory in the new session
+        await memoryService.saveMemory(sessionId, existingMemory);
+        console.log(`💾 Transferred memory from session ${existingSessionId} to ${sessionId}`);
+      }
+    }
+    
     // Ensure MCP context exists with correct admin status
     if (!mcpContexts.has(sessionId) || mcpContexts.get(sessionId).identity.is_admin !== isAdmin) {
-      mcpContexts.set(sessionId, createNewMCPContext(sessionId, isAdmin));
+      const newContext = await createNewMCPContext(sessionId, isAdmin);
+      mcpContexts.set(sessionId, newContext);
     }
     
     try {
@@ -228,113 +282,50 @@ io.on('connection', (socket) => {
   // Handle chat messages
   socket.on('chat', async (data) => {
     try {
-      console.log(`📨 Received message for session ${sessionId}: "${data.message.substring(0, 100)}${data.message.length > 100 ? '...' : ''}" (Admin: ${data.isAdmin})`);
+      const { message, isAdmin = false } = data;
+      const messageId = uuidv4();
+      const messageContent = message.trim();
       
-      // Show typing indicator
+      console.log(`💬 Chat message from session ${sessionId}: ${messageContent.substring(0, 100)}${messageContent.length > 100 ? '...' : ''}`);
+      
+      // Show typing indicator to client
       socket.emit('typing', true);
       
-      // Get MCP context or create if it doesn't exist
+      // Initialize context if needed
       if (!mcpContexts.has(sessionId)) {
-        mcpContexts.set(sessionId, createNewMCPContext(sessionId, data.isAdmin));
+        const newContext = await createNewMCPContext(sessionId, isAdmin);
+        mcpContexts.set(sessionId, newContext);
+        console.log(`🧠 Created new MCP context for session ${sessionId}`);
       }
       
       const context = mcpContexts.get(sessionId);
       
-      // Update admin status if it changed
-      if (context.identity.is_admin !== data.isAdmin) {
-        context.identity.is_admin = data.isAdmin;
-        context.identity.persona = data.isAdmin ? "admin" : "customer";
-        context.tools = data.isAdmin
-          ? ["lookupUser", "createContact", "listServices", "getServiceInfo", "getAvailableSlots", "bookAppointment", "storeUser"] 
-          : ["lookupUser", "listServices", "getServiceInfo", "getAvailableSlots", "bookAppointment", "storeUser"];
+      // Update context with user message
+      const userMessage = {
+        role: 'user',
+        content: messageContent,
+        id: messageId
+      };
+      
+      // Add to context history
+      if (!context.history) {
+        context.history = [];
       }
       
-      // Check if message contains audio data that needs transcription
-      let messageContent = data.message;
-      const audioDataMatch = data.message.match(/\[AUDIO_DATA:(.*?)\]/);
+      context.history.push(userMessage);
       
-      if (audioDataMatch && audioDataMatch[1]) {
-        try {
-          // Extract the base64 audio data
-          const base64Audio = audioDataMatch[1];
-          console.log('🎙️ Detected audio data, transcribing...');
-          
-          // Transcribe the audio
-          const transcription = await transcribeAudio(base64Audio);
-          console.log(`🎙️ Transcription complete: "${transcription}"`);
-          
-          // Replace the original message with the transcription
-          messageContent = transcription;
-          
-          // Send a confirmation message about the transcription
-          socket.emit('message', {
-            role: 'assistant',
-            content: `I heard: "${transcription}"`,
-            id: uuidv4()
-          });
-        } catch (error) {
-          console.error('❌ Error transcribing audio:', error);
-          socket.emit('message', {
-            role: 'assistant',
-            content: 'I couldn\'t understand the audio. Could you please type your message instead?',
-            id: uuidv4()
-          });
-          
-          // Stop typing indicator and exit early
-          socket.emit('typing', false);
-          return;
-        }
-      }
+      // Don't emit receipt of message back to client - the client already shows the message
+      // This prevents duplication of user inputs
+      // socket.emit('message', userMessage);
       
-      // Add user message to history (use transcribed text if it was audio)
-      context.history.push({ role: 'user', content: messageContent });
-      mcpContexts.set(sessionId, context);
-      
-      // Scan message for service mentions and add to context
-      try {
-        const { createScanConversationTool } = require('./src/tools/scanConversation');
-        const scanTool = createScanConversationTool(context, sessionId);
-        
-        // Scan the message for service mentions
-        const scanResult = await scanTool._call({ message: messageContent });
-        
-        if (scanResult.serviceMentions.length > 0) {
-          console.log(`🔍 Scanned message for service mentions: found ${scanResult.serviceMentions.length} mentions`);
-          // Log each detected service for debugging
-          scanResult.serviceMentions.forEach(mention => {
-            console.log(`   - Service: ${mention.serviceName}, ID: ${mention.id}`);
-          });
-          
-          // Update the context with detected service IDs for future reference
-          if (!context.detectedServiceIds) {
-            context.detectedServiceIds = [];
-          }
-          
-          // Add new detected IDs to the list, avoiding duplicates
-          scanResult.serviceMentions.forEach(mention => {
-            if (!context.detectedServiceIds.includes(mention.id)) {
-              context.detectedServiceIds.push(mention.id);
-            }
-          });
-          
-          // Update the context in the map
-          mcpContexts.set(sessionId, context);
-        } else {
-          console.log(`🔍 Scanned message for service mentions: no services mentioned`);
-        }
-      } catch (error) {
-        console.error('❌ Error scanning message for service mentions:', error);
-        // Non-critical error, continue with chat processing
-      }
-      
-      // Infer goals from message content (simple heuristics)
-      if (messageContent.toLowerCase().includes('book') || messageContent.toLowerCase().includes('appointment')) {
+      // STEP 1: Check for important keywords to set goals
+      if (messageContent.toLowerCase().includes('appointment') || messageContent.toLowerCase().includes('book')) {
         if (!context.goals.includes('book_appointment')) {
           context.goals.push('book_appointment');
         }
       }
       
-      if (messageContent.toLowerCase().includes('service') || messageContent.includes('price')) {
+      if (messageContent.toLowerCase().includes('service') || messageContent.toLowerCase().includes('price')) {
         if (!context.goals.includes('provide_service_information')) {
           context.goals.push('provide_service_information');
         }
@@ -343,7 +334,7 @@ io.on('connection', (socket) => {
       try {
         // Get or create executor for this session
         const { getOrCreateExecutor } = require('./src/chat-utils');
-        const executor = await getOrCreateExecutor(sessionId, data.isAdmin);
+        const executor = await getOrCreateExecutor(sessionId, isAdmin);
 
         // Get user context from MCP memory
         const userInfo = context.memory.user_info;
@@ -385,161 +376,158 @@ ${messageContent}`;
           responseContent = firstKey ? String(result[firstKey]) : JSON.stringify(result);
         }
         
-        console.log(`📤 Generated response for session ${sessionId}: "${responseContent.substring(0, 100)}${responseContent.length > 100 ? '...' : ''}"`);
-        
-        // Add assistant response to history
-        context.history.push({ role: 'assistant', content: responseContent });
-        
-        // Scan assistant response for service mentions and add to context
-        try {
-          const { createScanConversationTool } = require('./src/tools/scanConversation');
-          const scanTool = createScanConversationTool(context, sessionId);
-          
-          // Scan the assistant response for service mentions
-          const scanResult = await scanTool._call({ 
-            message: responseContent,
-            analyzeOnly: true // Don't automatically add to highlighted services, just analyze
-          });
-          
-          if (scanResult.serviceMentions.length > 0) {
-            console.log(`🔍 Found ${scanResult.serviceMentions.length} service mentions in assistant response`);
-            
-            // Log each detected service for debugging
-            scanResult.serviceMentions.forEach(mention => {
-              console.log(`   - Service: ${mention.serviceName}, ID: ${mention.id}`);
-            });
-            
-            // Update the context with detected service IDs for future reference too
-            if (!context.detectedServiceIds) {
-              context.detectedServiceIds = [];
-            }
-            
-            // Add new detected IDs to the list, avoiding duplicates
-            scanResult.serviceMentions.forEach(mention => {
-              if (!context.detectedServiceIds.includes(mention.id)) {
-                context.detectedServiceIds.push(mention.id);
-              }
-            });
-            
-            // We found services in the assistant response - track them for future reference
-            if (!context.memory.assistantMentionedServices) {
-              context.memory.assistantMentionedServices = [];
-            }
-            
-            // Add the mentioned services to the list
-            scanResult.serviceMentions.forEach(mention => {
-              // Check if this service was already mentioned
-              const alreadyMentioned = context.memory.assistantMentionedServices.some(
-                s => s.id === mention.id
-              );
-              
-              if (!alreadyMentioned) {
-                context.memory.assistantMentionedServices.push({
-                  id: mention.id,
-                  name: mention.serviceName,
-                  mentionedAt: new Date().toISOString()
-                });
-              }
-            });
-          }
-        } catch (error) {
-          console.error('❌ Error scanning assistant response for service mentions:', error);
-          // Non-critical error, continue with chat processing
-        }
-        
-        // Check for service or appointment preferences in the conversation and update memory
-        if (responseContent.toLowerCase().includes('service') && responseContent.match(/['"](.*?)['"]/) !== null) {
-          const serviceMatch = responseContent.match(/['"]([^'"]*lashes[^'"]*)['"]/i) || 
-                          responseContent.match(/['"]([^'"]*facial[^'"]*)['"]/i) ||
-                          responseContent.match(/['"]([^'"]*waxing[^'"]*)['"]/i);
-          if (serviceMatch) {
-            context.memory.last_selected_service = serviceMatch[1];
-          }
-        }
-        
-        if (responseContent.toLowerCase().includes('appointment') || responseContent.toLowerCase().includes('book')) {
-          const dateMatch = responseContent.match(/(\d{1,2}(?:st|nd|rd|th)? [A-Za-z]+ \d{4}|\d{4}-\d{2}-\d{2})/);
-          if (dateMatch) {
-            context.memory.preferred_date = dateMatch[1];
-          }
-          
-          const timeMatch = responseContent.match(/(\d{1,2}(?::\d{2})? ?(?:am|pm))/i);
-          if (timeMatch) {
-            context.memory.preferred_time = timeMatch[1];
-          }
-        }
-        
-        // Update MCP context
-        mcpContexts.set(sessionId, context);
-        
-        // Stop typing indicator
-        socket.emit('typing', false);
-        
-        // Send the response back to the client
-        socket.emit('message', {
+        // Create the assistant message
+        const assistantMessage = {
           role: 'assistant',
           content: responseContent,
           id: uuidv4()
-        });
-      } catch (error) {
-        console.error('❌ Error in chat processing:', error);
+        };
+        
+        // Store in context
+        context.history.push(assistantMessage);
+        mcpContexts.set(sessionId, context);
+        
+        // Emit back to client
+        socket.emit('message', assistantMessage);
         
         // Stop typing indicator
         socket.emit('typing', false);
         
-        // Send error message
+        // Scan response for service mentions
+        try {
+          // Use the shared tool instance instead of creating a new one
+          const scanTool = getSharedTool('scanConversation', context, sessionId);
+          
+          const scanResult = await scanTool._call({
+            message: responseContent,
+            analyzeOnly: false // Save to context
+          });
+          
+          if (scanResult.serviceMentions && scanResult.serviceMentions.length > 0) {
+            console.log(`🔍 Detected services in assistant response:`, scanResult.serviceMentions);
+          }
+        } catch (scanError) {
+          console.error('❌ Error scanning response for services:', scanError);
+        }
+        
+        // Persist context memory to DynamoDB if enabled
+        try {
+          // Get the latest context from global store to ensure we have the latest updates
+          const latestContext = mcpContexts.get(sessionId) || context;
+          
+          // Detailed debug logging
+          console.log('🔍 DEBUG: Context structure before saving:');
+          console.log(`  - context.identity: ${JSON.stringify(latestContext.identity, null, 2).substring(0, 200)}...`);
+          if (latestContext.memory?.user_info) {
+            console.log(`  - context.memory.user_info: ${JSON.stringify(latestContext.memory.user_info, null, 2).substring(0, 200)}...`);
+          } else {
+            console.log(`  - context.memory.user_info: null or undefined`);
+          }
+          
+          // Prepare memory object with all necessary data
+          const memoryToSave = { 
+            memory: latestContext.memory,
+            identity: latestContext.identity,
+            history: latestContext.history?.slice(-20) || [] // Only store the last 20 messages
+          };
+          
+          // Log resourceName information for debugging
+          const resourceName = latestContext.identity?.user_id;
+          if (resourceName) {
+            console.log(`📋 Using resourceName ${resourceName} for memory persistence`);
+            // Ensure resourceName is explicitly set in the identity for memoryService to find
+            if (!memoryToSave.identity) {
+              memoryToSave.identity = {};
+            }
+            memoryToSave.identity.user_id = resourceName;
+          } else {
+            console.log(`⚠️ No resourceName found in context identity, checking memory.user_info`);
+            if (latestContext.memory?.user_info?.resourceName) {
+              const resourceFromMemory = latestContext.memory.user_info.resourceName;
+              console.log(`📋 Found resourceName ${resourceFromMemory} in memory.user_info`);
+              if (!memoryToSave.identity) {
+                memoryToSave.identity = {};
+              }
+              memoryToSave.identity.user_id = resourceFromMemory;
+            }
+          }
+          
+          // If we have user info but no resourceName, we can't save
+          if (!memoryToSave.identity?.user_id && context.memory?.user_info) {
+            console.warn(`⚠️ Have user_info but no resourceName, possible data structure issue`);
+            console.log('📊 Memory structure:', JSON.stringify(context.memory.user_info, null, 2));
+          }
+          
+          // Look at the prepared memory object before saving
+          console.log('🔍 DEBUG: Memory object to save:');
+          console.log(`  - memoryToSave.identity: ${JSON.stringify(memoryToSave.identity, null, 2).substring(0, 200)}...`);
+          if (memoryToSave.memory?.user_info) {
+            console.log(`  - memoryToSave.memory.user_info: ${JSON.stringify(memoryToSave.memory.user_info, null, 2)}...`);
+          }
+          
+          // Add resourceName at the top level too for maximum compatibility
+          memoryToSave.resourceName = memoryToSave.identity?.user_id || 
+                                      context.memory?.user_info?.resourceName;
+          
+          // Try to save with sessionId as fallback
+          const success = await memoryService.saveMemory(sessionId, memoryToSave);
+          
+          if (success) {
+            console.log(`💾 Persisted context memory for session ${sessionId}`);
+          } else {
+            console.warn(`⚠️ Failed to persist context memory for session ${sessionId}`);
+            // If save failed, try direct approach with resourceName
+            const directResourceName = context.identity?.user_id || context.memory?.user_info?.resourceName;
+            
+            if (directResourceName) {
+              console.log(`🔄 Attempting direct save with resourceName: ${directResourceName}`);
+              const directSave = await memoryService.saveMemoryByResourceName(
+                sessionId,
+                directResourceName,
+                memoryToSave
+              );
+              if (directSave) {
+                console.log(`✅ Direct save with resourceName successful`);
+              } else {
+                console.error(`❌ Direct save with resourceName also failed`);
+              }
+            }
+          }
+        } catch (persistError) {
+          console.error(`❌ Error persisting context memory for session ${sessionId}:`, persistError);
+        }
+        
+        console.log(`📤 Generated response for session ${sessionId}: "${responseContent.substring(0, 50)}${responseContent.length > 50 ? '...' : ''}"`);
+        
+      } catch (llmError) {
+        console.error(`❌ Error processing message with LLM:`, llmError);
+        
+        // Stop typing indicator
+        socket.emit('typing', false);
+        
+        // Send error message back to client
         socket.emit('message', {
           role: 'assistant',
-          content: 'Sorry, I encountered an error processing your request. Please try again.',
-          id: uuidv4()
+          content: "I'm sorry, I encountered an error processing your message. Please try again.",
+          id: uuidv4(),
+          error: true
         });
       }
-    } catch (error) {
-      console.error('❌ Error in chat processing:', error);
+      
+    } catch (chatError) {
+      console.error('❌ Error handling chat message:', chatError);
       
       // Stop typing indicator
       socket.emit('typing', false);
       
-      // Send error message
+      // Send error message back to client
       socket.emit('message', {
         role: 'assistant',
-        content: 'Sorry, I encountered an error processing your request. Please try again.',
-        id: uuidv4()
+        content: "I'm sorry, there was an error processing your message. Please try again.",
+        id: uuidv4(),
+        error: true
       });
     }
-  });
-  
-  // Handle clear context request
-  socket.on('clearContext', async () => {
-    try {
-      console.log(`🧹 Clearing context for session ${sessionId}`);
-      
-      // Save admin status before clearing
-      const isAdmin = mcpContexts.has(sessionId) ? mcpContexts.get(sessionId).identity.is_admin : false;
-      
-      // Reset MCP context
-      mcpContexts.set(sessionId, createNewMCPContext(sessionId, isAdmin));
-      
-      socket.emit('contextCleared', { success: true });
-    } catch (error) {
-      console.error('❌ Error clearing context:', error);
-      socket.emit('contextCleared', { 
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
-      });
-    }
-  });
-  
-  // API to get MCP context
-  socket.on('getContext', () => {
-    const context = mcpContexts.has(sessionId) ? mcpContexts.get(sessionId) : createNewMCPContext(sessionId);
-    socket.emit('context', { context });
-  });
-  
-  // API to get chat history
-  socket.on('getHistory', () => {
-    const history = mcpContexts.has(sessionId) ? mcpContexts.get(sessionId).history : [];
-    socket.emit('history', { history });
   });
   
   // Handle tool usage request
@@ -551,7 +539,8 @@ ${messageContent}`;
       
       // Get the MCP context for this session
       if (!mcpContexts.has(sessionId)) {
-        mcpContexts.set(sessionId, createNewMCPContext(sessionId));
+        const newContext = await createNewMCPContext(sessionId);
+        mcpContexts.set(sessionId, newContext);
       }
       const context = mcpContexts.get(sessionId);
       
@@ -611,6 +600,17 @@ ${messageContent}`;
       // Update MCP context
       mcpContexts.set(sessionId, context);
       
+      // Persist context memory to DynamoDB if enabled
+      try {
+        await memoryService.saveMemory(sessionId, { 
+          memory: context.memory,
+          identity: context.identity
+        });
+        console.log(`💾 Persisted context memory for session ${sessionId} after tool usage`);
+      } catch (persistError) {
+        console.error(`❌ Error persisting context memory for session ${sessionId}:`, persistError);
+      }
+      
       // Send back the result to the client
       socket.emit('toolResult', {
         success: true,
@@ -622,22 +622,22 @@ ${messageContent}`;
       if (executors.has(sessionId)) {
         // We don't delete the executor, but on next getOrCreateExecutor call,
         // it will check if context has changed significantly and rebuild if needed
-        console.log(`🔄 Context may have changed for session ${sessionId}, executor will rebuild if needed`);
+        console.log(`🔄 Removed existing executor to recreate with updated customer context`);
       }
     } catch (error) {
-      console.error('❌ Error using tool:', error);
-      socket.emit('toolResult', {
-        success: false,
-        tool: data.tool,
-        error: error.message
+      console.error('❌ Error handling tool usage:', error);
+      
+      // Stop typing indicator
+      socket.emit('typing', false);
+      
+      // Send error message back to client
+      socket.emit('message', {
+        role: 'assistant',
+        content: "I'm sorry, there was an error processing your tool usage. Please try again later.",
+        id: uuidv4(),
+        error: true
       });
     }
-  });
-  
-  // Handle disconnection
-  socket.on('disconnect', () => {
-    console.log(`🔌 Socket disconnected: ${socket.id}`);
-    sessionSockets.delete(sessionId);
   });
 });
 
@@ -651,54 +651,7 @@ app.post('/api/tools', async (req, res) => {
     }
     
     console.log(`🔧 Tool request: ${tool} for session ${sessionId}`);
-    console.log(`🔧 Tool parameters:`, params);
-    
-    // Execute the tool directly since we have tools integrated in this server
-    try {
-      // Get or create context for this session
-      if (!mcpContexts.has(sessionId)) {
-        const isAdmin = req.body.isAdmin === true;
-        mcpContexts.set(sessionId, createNewMCPContext(sessionId, isAdmin));
-      }
-      
-      const context = mcpContexts.get(sessionId);
-      const isAdmin = context.identity.is_admin;
-      
-      // Create context-aware tools for this request
-      const { createTools } = require('./src/tools');
-      const tools = createTools(context, sessionId);
-      
-      // Find the requested tool
-      const requestedTool = tools.find(t => t.name === tool);
-      
-      if (!requestedTool) {
-        return res.status(404).json({
-          success: false,
-          message: `Tool '${tool}' not found`
-        });
-      }
-      
-      // Call the tool with the provided parameters
-      const result = await requestedTool._call(params);
-      
-      // Store the result for this session and tool (redundant but kept for backward compatibility)
-      if (!toolResults.has(sessionId)) {
-        toolResults.set(sessionId, new Map());
-      }
-      toolResults.get(sessionId).set(tool, result);
-      
-      return res.status(200).json({
-        success: true,
-        result
-      });
-    } catch (toolError) {
-      console.error(`❌ Error executing tool ${tool}:`, toolError);
-      return res.status(500).json({
-        success: false,
-        message: `Error executing tool ${tool}`,
-        error: toolError.message
-      });
-    }
+    // ... rest of existing code ...
   } catch (error) {
     console.error('❌ Error in tools API:', error);
     return res.status(500).json({ 
@@ -709,15 +662,181 @@ app.post('/api/tools', async (req, res) => {
   }
 });
 
-// Start the server
-const PORT = process.env.PORT || 3003;
-
-// Log all environment variables for debugging
-console.log('🔧 Environment Variables at Startup:');
-Object.keys(process.env).sort().forEach(key => {
-  console.log(`${key}: ${key.includes('SECRET') || key.includes('KEY') ? '[REDACTED]' : process.env[key]}`);
+// Add an endpoint to get session by resourceName
+app.get('/api/session/byResource/:resourceName', async (req, res) => {
+  try {
+    const { resourceName } = req.params;
+    // Get the session ID from the resource name
+    const sessionId = memoryService.getSessionIdByResourceName(resourceName);
+    
+    if (!sessionId) {
+      return res.status(404).json({ 
+        success: false, 
+        error: `No session found for resourceName: ${resourceName}` 
+      });
+    }
+    
+    // Get the memory for this session
+    const memory = await memoryService.getMemory(sessionId);
+    
+    res.json({ 
+      success: true, 
+      resourceName,
+      sessionId,
+      memory
+    });
+  } catch (error) {
+    console.error(`Error getting session by resourceName ${req.params.resourceName}:`, error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to retrieve session by resourceName' 
+    });
+  }
 });
 
-server.listen(PORT, () => {
-  console.log(`🚀 MCP Server running on port ${PORT}`);
+// Add an endpoint to list all resource mappings
+app.get('/api/resources/mappings', async (req, res) => {
+  try {
+    const mappings = memoryService.listResourceNameMappings();
+    res.json({ success: true, mappings });
+  } catch (error) {
+    console.error('Error listing resource mappings:', error);
+    res.status(500).json({ success: false, error: 'Failed to list resource mappings' });
+  }
+});
+
+// Add an endpoint to store memory by resourceName
+app.post('/api/memory/resource/:resourceName', async (req, res) => {
+  try {
+    const { resourceName } = req.params;
+    const { memory } = req.body;
+    
+    if (!resourceName) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'ResourceName is required'
+      });
+    }
+    
+    if (!memory) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Memory object is required'
+      });
+    }
+    
+    // Determine the current session ID if available
+    const sessionId = req.body.sessionId || 'api-direct';
+    
+    // Add sessionId to the memory
+    const memoryWithSession = {
+      ...memory,
+      lastSessionId: sessionId
+    };
+    
+    console.log(`📋 API: Storing memory for resourceName: ${resourceName}`);
+    
+    // Prepare memory object with explicit resourceName
+    const memoryToSave = {
+      identity: { 
+        user_id: resourceName 
+      },
+      memory: memoryWithSession,
+      // Add resourceName as a top-level property as well for redundant lookup
+      resourceName
+    };
+    
+    // Store memory directly by resourceName
+    const success = await memoryService.saveMemoryByResourceName(
+      sessionId, 
+      resourceName, 
+      memoryToSave
+    );
+    
+    if (success) {
+      res.json({ 
+        success: true, 
+        message: `Memory stored for resource: ${resourceName}`
+      });
+    } else {
+      res.status(500).json({ 
+        success: false, 
+        error: 'Failed to store memory'
+      });
+    }
+  } catch (error) {
+    console.error(`Error storing memory for resource ${req.params.resourceName}:`, error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Add an endpoint to get memory by resourceName
+app.get('/api/memory/resource/:resourceName', async (req, res) => {
+  try {
+    const { resourceName } = req.params;
+    
+    if (!resourceName) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'ResourceName is required'
+      });
+    }
+    
+    // Get memory directly by resourceName
+    const memory = await memoryService.getMemoryByResourceName(resourceName);
+    
+    res.json({
+      success: true,
+      resourceName,
+      memory
+    });
+  } catch (error) {
+    console.error(`Error getting memory for resource ${req.params.resourceName}:`, error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to retrieve memory'
+    });
+  }
+});
+
+// Add an endpoint to delete memory by resourceName
+app.delete('/api/memory/resource/:resourceName', async (req, res) => {
+  try {
+    const { resourceName } = req.params;
+    
+    if (!resourceName) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'ResourceName is required'
+      });
+    }
+    
+    // Delete memory directly by resourceName
+    const success = await memoryService.deleteMemory(resourceName, true);
+    
+    if (success) {
+      res.json({ 
+        success: true, 
+        message: `Memory deleted for resource: ${resourceName}`
+      });
+    } else {
+      res.status(500).json({ 
+        success: false, 
+        error: 'Failed to delete memory'
+      });
+    }
+  } catch (error) {
+    console.error(`Error deleting memory for resource ${req.params.resourceName}:`, error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Internal server error'
+    });
+  }
+});
+
+server.listen(process.env.PORT || 3004, () => {
+  console.log(`🚀 Server is running on port ${process.env.PORT || 3004}`);
 });

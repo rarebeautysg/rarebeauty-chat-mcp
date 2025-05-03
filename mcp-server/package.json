@@ -13,6 +13,8 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.799.0",
+    "@aws-sdk/lib-dynamodb": "^3.535.0",
     "@googleapis/calendar": "^9.8.0",
     "@langchain/community": "^0.3.40",
     "@langchain/core": "^0.3.44",
