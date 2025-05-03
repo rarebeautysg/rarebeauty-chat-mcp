@@ -125,21 +125,49 @@ html, body {
   margin: 0;
   padding: 0;
   overflow-x: hidden;
+  color: #000000 !important;
 }
 
 body {
   position: relative;
+  background-color: #ffffff !important;
 }
 
 @media (max-width: 640px) {
   body {
-    height: -webkit-fill-available;
+    height: 100%;
+    min-height: -webkit-fill-available;
   }
   
   main {
-    height: 100vh;
-    /* For iOS Safari */
-    height: -webkit-fill-available;
+    height: 100%;
+    min-height: 100vh;
+    min-height: -webkit-fill-available;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Ensure the chat container doesn't overflow */
+  .chat-container {
+    flex: 1;
+    min-height: 0;
+    max-height: calc(100vh - 120px);
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Force contrast for better visibility */
+  p, span, div, h1, h2, h3, h4, h5, h6, li {
+    color: #000000 !important;
+  }
+
+  /* Ensure the input is always visible */
+  .input-container {
+    position: sticky;
+    bottom: 0;
+    background-color: #ffffff;
+    z-index: 10;
+    padding-bottom: env(safe-area-inset-bottom, 10px);
   }
 }
 

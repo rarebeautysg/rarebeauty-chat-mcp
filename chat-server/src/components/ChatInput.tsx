@@ -64,17 +64,17 @@ const ChatInput: React.FC<ChatInputProps> = ({
       {isMounted && connectionStatus !== 'connected' && !onSubmit && (
         <div className="mb-2 text-sm text-center">
           {connectionStatus === 'connecting' && 
-            <span className="text-yellow-500">Connecting to server...</span>}
+            <span className="text-yellow-800 font-medium">Connecting to server...</span>}
           {connectionStatus === 'disconnected' && 
-            <span className="text-red-500">Disconnected. Trying to reconnect...</span>}
+            <span className="text-red-800 font-medium">Disconnected. Trying to reconnect...</span>}
           {connectionStatus === 'error' && 
-            <span className="text-red-500">Connection error. Please refresh the page.</span>}
+            <span className="text-red-800 font-medium">Connection error. Please refresh the page.</span>}
         </div>
       )}
       
       {/* Typing indicator - only render on client */}
       {isMounted && (isTyping || isLoading) && (
-        <div className="mb-2 text-sm text-gray-500">
+        <div className="mb-2 text-sm text-gray-900 font-medium">
           Assistant is typing...
         </div>
       )}
@@ -92,13 +92,13 @@ const ChatInput: React.FC<ChatInputProps> = ({
           }}
           placeholder={placeholder}
           disabled={(!isConnected && !onSubmit) || isLoading}
-          className="flex-1 resize-none rounded-md border border-gray-300 p-2 focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[40px] max-h-[120px] bg-white text-gray-900"
+          className="flex-1 resize-none rounded-md border border-gray-400 p-2 focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[40px] max-h-[120px] bg-white text-black font-medium text-base"
           rows={1}
         />
         <button
           type="submit"
           disabled={(!isConnected && !onSubmit) || !message.trim() || isLoading}
-          className="bg-blue-500 text-white rounded-md px-4 py-2 hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed"
+          className="bg-blue-500 text-white rounded-md px-4 py-2 hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed font-medium"
         >
           Send
         </button>

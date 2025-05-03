@@ -35,7 +35,7 @@ const MCPChat: React.FC<MCPChatProps> = ({ isAdmin = false }) => {
   }, [searchParams, isCustomerLoaded]);
 
   return (
-    <div className="flex flex-col h-full max-h-full bg-white">
+    <div className="flex flex-col h-full max-h-full bg-white chat-container">
       {/* Connection status banner - only render on client */}
       {isMounted && connectionStatus !== 'connected' && (
         <div className={`p-2 text-center text-sm ${
@@ -50,10 +50,10 @@ const MCPChat: React.FC<MCPChatProps> = ({ isAdmin = false }) => {
       )}
       
       {/* Chat messages area */}
-      <div className="flex-1 overflow-y-auto p-4 bg-white">
+      <div className="flex-1 overflow-y-auto p-4 bg-white min-h-0">
         {messages.length === 0 ? (
           <div className="flex items-center justify-center h-full">
-            <p className="text-gray-500">
+            <p className="text-gray-900 font-medium">
               {isTyping ? "Loading..." : "Start a conversation..."}
             </p>
           </div>
@@ -83,7 +83,9 @@ const MCPChat: React.FC<MCPChatProps> = ({ isAdmin = false }) => {
       </div>
       
       {/* Input area */}
-      <ChatInput isAdmin={isAdmin} />
+      <div className="input-container">
+        <ChatInput isAdmin={isAdmin} />
+      </div>
     </div>
   );
 };

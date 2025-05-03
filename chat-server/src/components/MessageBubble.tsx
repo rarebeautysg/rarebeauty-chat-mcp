@@ -71,9 +71,9 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
           }`}
         >
           {message.role === 'user' ? (
-            <p className="text-sm sm:text-base font-normal">{message.content}</p>
+            <p className="text-sm sm:text-base font-semibold text-white">{message.content}</p>
           ) : (
-            <div className="text-xs sm:text-sm font-normal markdown-content markdown-body">
+            <div className="text-xs sm:text-sm font-medium markdown-content markdown-body">
               <ReactMarkdown
                 remarkPlugins={[[remarkGfm, { tableCellPadding: true, tablePipeAlign: true }]]}
                 rehypePlugins={[rehypeRaw]}
