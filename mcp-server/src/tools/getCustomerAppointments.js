@@ -135,7 +135,7 @@ function formatAppointment(appointment) {
   }
   
   // Get service name from transaction items
-  let serviceName = "Unknown Service";
+  let serviceNames = "Unknown Service";
   let price = 0;
   
   if (transaction.items && transaction.items.length > 0) {
@@ -258,7 +258,8 @@ class GetCustomerAppointmentsTool extends StructuredTool {
         return JSON.stringify({
           message: "No previous appointments found for this customer.",
           appointments: [],
-          cancelCount: appointmentData.cancelCount || 0
+          cancelCount: appointmentData.cancelCount || 0,
+          isAppointmentHistory: true
         });
       }
 
@@ -267,7 +268,8 @@ class GetCustomerAppointmentsTool extends StructuredTool {
       return JSON.stringify({
         message: `Found ${formattedAppointments.length} previous appointment(s) for this customer.`,
         appointments: formattedAppointments,
-        cancelCount: appointmentData.cancelCount || 0
+        cancelCount: appointmentData.cancelCount || 0,
+        isAppointmentHistory: true
       });
       
     } catch (error) {
@@ -278,7 +280,8 @@ class GetCustomerAppointmentsTool extends StructuredTool {
         message: `Error retrieving appointment data: ${error.message}`,
         error: true,
         appointments: [],
-        cancelCount: 0
+        cancelCount: 0,
+        isAppointmentHistory: true
       });
     }
   }

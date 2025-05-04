@@ -111,6 +111,7 @@ class LookupAndHistoryTool extends StructuredTool {
           // Add flags to indicate these are historical services
           appointments.areHistoricalServices = true;
           appointments.doNotAddToServiceSelections = true;
+          appointments.isAppointmentHistory = true; // Clear marker for history detection
           
           // Combine the result
           const combinedResult = {
@@ -119,7 +120,8 @@ class LookupAndHistoryTool extends StructuredTool {
             appointment_message: appointments.message || "No appointment data available",
             cancelCount: appointments.cancelCount || 0,
             areHistoricalServices: true,
-            doNotAddToServiceSelections: true
+            doNotAddToServiceSelections: true,
+            isAppointmentHistory: true // Clear marker that this is appointment history
           };
           
           console.log(`✅ LookupAndHistoryTool: Successfully combined user and appointment data`);
