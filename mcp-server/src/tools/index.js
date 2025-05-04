@@ -7,7 +7,7 @@ const lookupUser = require('./lookupUser');
 const createContact = require('./createContact');
 const storeUser = require('./storeUser');
 const suggestServices = require('./suggestServices');
-const scanConversation = require('./scanConversation');
+const scanServices = require('./scanServices');
 const getCustomerAppointments = require('./getCustomerAppointments');
 const lookupAndHistory = require('./lookupAndHistory');
 
@@ -133,15 +133,15 @@ function createTools(context, sessionId) {
     console.error('❌ Error creating suggestServices tool:', error);
   }
   
-  // scanConversation tool
+  // scanServices tool
   try {
-    if (scanConversation.createScanConversationTool) {
-      tools.push(scanConversation.createScanConversationTool(context, sessionId));
+    if (scanServices.createScanServicesTool) {
+      tools.push(scanServices.createScanServicesTool(context, sessionId));
     } else {
-      console.warn('⚠️ ScanConversationTool could not be created with context');
+      console.warn('⚠️ ScanServicesTool could not be created with context');
     }
   } catch (error) {
-    console.error('❌ Error creating scanConversation tool:', error);
+    console.error('❌ Error creating scanServices tool:', error);
   }
   
   // Do NOT register getCustomerAppointments as a separate tool anymore

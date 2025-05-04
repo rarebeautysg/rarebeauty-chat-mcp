@@ -98,8 +98,8 @@ async function createNewMCPContext(sessionId, isAdmin = false) {
       assistantMentionedServices: [] // Services mentioned by the assistant
     },
     tools: isAdmin
-      ? ["lookupUser", "createContact", "listServices", "getServiceInfo", "getAvailableSlots", "bookAppointment", "storeUser", "suggestServices", "scanConversation", "getCustomerAppointments"] 
-      : ["lookupUser", "listServices", "getServiceInfo", "getAvailableSlots", "bookAppointment", "storeUser", "suggestServices", "scanConversation"],
+      ? ["lookupUser", "createContact", "listServices", "getServiceInfo", "getAvailableSlots", "bookAppointment", "storeUser", "suggestServices", "scanServices", "getCustomerAppointments"] 
+      : ["lookupUser", "listServices", "getServiceInfo", "getAvailableSlots", "bookAppointment", "storeUser", "suggestServices", "scanServices"],
     history: [],
     detectedServiceIds: [] // Store service IDs detected in the conversation
   };
@@ -120,9 +120,9 @@ async function createNewMCPContext(sessionId, isAdmin = false) {
 function getSharedTool(toolName, context, sessionId) {
   const key = `${sessionId}:${toolName}`;
   if (!sharedTools.has(key)) {
-    if (toolName === 'scanConversation') {
-      const { createScanConversationTool } = require('./src/tools/scanConversation');
-      sharedTools.set(key, createScanConversationTool(context, sessionId));
+    if (toolName === 'scanServices') {
+      const { createScanServicesTool } = require('./src/tools/scanServices');
+      sharedTools.set(key, createScanServicesTool(context, sessionId));
     }
     // Add other tool types as needed
   }
@@ -396,7 +396,7 @@ ${messageContent}`;
         // Scan response for service mentions
         try {
           // Use the shared tool instance instead of creating a new one
-          const scanTool = getSharedTool('scanConversation', context, sessionId);
+          const scanTool = getSharedTool('scanServices', context, sessionId);
           
           const scanResult = await scanTool._call({
             message: responseContent,

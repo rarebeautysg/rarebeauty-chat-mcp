@@ -87,10 +87,10 @@ class LookupAndHistoryTool extends StructuredTool {
           // Parse the appointments JSON
           const appointments = JSON.parse(appointmentsResult);
           
-          // Obfuscate service names and IDs to prevent scanConversation from detecting them
+          // Obfuscate service names and IDs to prevent scanServices from detecting them
           if (appointments.appointments && Array.isArray(appointments.appointments)) {
             appointments.appointments.forEach(appointment => {
-              // Replace service name with obfuscated version that scanConversation won't match
+              // Replace service name with obfuscated version that scanServices won't match
               if (appointment.serviceName) {
                 // Save original for display
                 appointment.displayServiceName = appointment.serviceName;
