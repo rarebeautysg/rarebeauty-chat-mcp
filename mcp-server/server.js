@@ -91,7 +91,7 @@ async function createNewMCPContext(sessionId, isAdmin = false) {
       : "Help customer book appointments and learn about services.",
     memory: existingMemory.memory || {
       user_info: null,
-      last_selected_service: null,
+      last_selected_services: [],
       preferred_date: null,
       preferred_time: null,
       highlightedServices: [], // Services mentioned by the user in conversation

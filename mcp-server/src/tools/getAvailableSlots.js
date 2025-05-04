@@ -265,7 +265,18 @@ class GetAvailableSlotsTool extends Tool {
         }
         
         if (serviceIds && serviceIds.length > 0) {
-          this.context.memory.last_selected_service = serviceIds[0];
+          // Track last selected services as an array
+          if (!this.context.memory.last_selected_services) {
+            this.context.memory.last_selected_services = [];
+          }
+          
+          // Convert to array if it's a string
+          const parsedIds = Array.isArray(serviceIds) 
+            ? serviceIds 
+            : serviceIds.split(',').map(id => id.trim());
+          
+          // Store the entire array of selected services
+          this.context.memory.last_selected_services = parsedIds;
         }
       }
       

@@ -68,6 +68,33 @@ body {
   background-color: #f3f4f6;
 }
 
+/* Dark mode protection for tables */
+.light-theme-tables table {
+  background-color: white !important;
+  color: #1f2937 !important;
+  border: 1px solid #e5e7eb !important;
+}
+
+.light-theme-tables th {
+  background-color: #f3f4f6 !important;
+  color: #374151 !important;
+  border-color: #e5e7eb !important;
+}
+
+.light-theme-tables td {
+  color: #374151 !important;
+  border-color: #e5e7eb !important;
+  background-color: white !important;
+}
+
+.light-theme-tables tr:nth-child(even) td {
+  background-color: #f9fafb !important;
+}
+
+.light-theme-tables tr:hover td {
+  background-color: #f3f4f6 !important;
+}
+
 /* For proper table rendering on mobile */
 @media (max-width: 640px) {
   .markdown-content table {

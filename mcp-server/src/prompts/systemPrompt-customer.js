@@ -7,7 +7,9 @@ export function createSystemPrompt(context = {}, dateInfo) {
   
   // Add default values for memory variables
   const userInfo = context.memory?.user_info || 'Unknown User';
-  const lastService = context.memory?.last_selected_service || 'No service selected';
+  const lastService = context.memory?.last_selected_services?.length > 0 
+    ? context.memory.last_selected_services.join(', ') 
+    : 'No service selected';
   const preferredDate = context.memory?.preferred_date || 'No date selected';
   const preferredTime = context.memory?.preferred_time || 'No time selected';
   

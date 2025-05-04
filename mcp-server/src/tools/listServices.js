@@ -351,6 +351,12 @@ async function highlightService(serviceId, context) {
       context.memory.highlightedServices = [];
     }
     
+    // Initialize detectedServiceIds array if it doesn't exist
+    if (!context.detectedServiceIds) {
+      context.detectedServiceIds = [];
+      console.log('✅ Initialized detectedServiceIds array in context (highlightService)');
+    }
+    
     // Check if service is already highlighted
     const alreadyHighlighted = context.memory.highlightedServices.some(s => s.id === service.id);
     
@@ -368,6 +374,17 @@ async function highlightService(serviceId, context) {
     } else {
       console.log(`ℹ️ Service "${service.name}" already highlighted`);
     }
+    
+    // Always ensure the service ID is in the detectedServiceIds array
+    if (!context.detectedServiceIds.includes(service.id)) {
+      context.detectedServiceIds.push(service.id);
+      console.log(`✅ Service ID "${service.id}" added to detectedServiceIds from highlightService`);
+    } else {
+      console.log(`ℹ️ Service ID "${service.id}" already in detectedServiceIds`);
+    }
+    
+    // Log the current state of the detectedServiceIds array for debugging
+    console.log(`🔍 Current detectedServiceIds: ${JSON.stringify(context.detectedServiceIds)}`);
     
     return true;
   } catch (error) {
@@ -398,46 +415,88 @@ async function trackServiceMention(serviceName, context, serviceId) {
       context.memory.highlightedServices = [];
     }
     
-    // If we have a service ID directly from the AI, use it
-    if (serviceId && serviceId.startsWith('service:')) {
-      // Don't try to validate the service ID - trust the AI's identification
-      console.log(`🔍 Using service ID directly from AI: ${serviceId}`);
+    // Initialize detectedServiceIds array if it doesn't exist
+    if (!context.detectedServiceIds) {
+      context.detectedServiceIds = [];
+      console.log('✅ Initialized detectedServiceIds array in context');
+    }
+    
+    // Validate serviceId format (if provided)
+    let validServiceId = serviceId;
+    
+    if (serviceId) {
+      // Ensure service ID has correct format
+      if (!serviceId.startsWith('service:')) {
+        if (/^\d+(-\d+)?$/.test(serviceId)) {
+          validServiceId = `service:${serviceId}`;
+          console.log(`✅ Corrected service ID format: ${validServiceId} (original: ${serviceId})`);
+        } else {
+          console.log(`⚠️ Invalid service ID format: ${serviceId}`);
+          validServiceId = null;
+        }
+      }
+    }
+    
+    // If we have a valid service ID (either from the input or corrected)
+    if (validServiceId) {
+      console.log(`🔍 Processing service ID: ${validServiceId}`);
       
-      // Check if service is already highlighted
-      const alreadyHighlighted = context.memory.highlightedServices.some(s => s.id === serviceId);
+      // Get service info for additional context
+      const services = await getAllFormattedServices();
+      const serviceInfo = services.find(s => s.id === validServiceId);
+      
+      // Add to highlighted services if not already there
+      const alreadyHighlighted = context.memory.highlightedServices.some(s => s.id === validServiceId);
       
       if (!alreadyHighlighted) {
-        // Try to get service info for display purposes only
-        const services = await getAllFormattedServices();
-        const serviceInfo = services.find(s => s.id === serviceId);
+        // Get the service name from either the provided info or the service name argument
+        const displayName = serviceInfo ? serviceInfo.name : (serviceName || `Service ${validServiceId}`);
         
         // Add to highlighted services
         context.memory.highlightedServices.push({
-          id: serviceId,
-          name: serviceInfo ? serviceInfo.name : serviceName || `Service ${serviceId}`,
+          id: validServiceId,
+          name: displayName,
           category: serviceInfo ? serviceInfo.category : 'Unknown',
           price: serviceInfo ? serviceInfo.price : null,
           highlightedAt: new Date().toISOString()
         });
         
-        console.log(`✅ Service ID "${serviceId}" highlighted and stored in context`);
+        console.log(`✅ Service ID "${validServiceId}" highlighted and stored in context as "${displayName}"`);
       } else {
-        console.log(`ℹ️ Service ID "${serviceId}" already highlighted`);
+        console.log(`ℹ️ Service ID "${validServiceId}" already highlighted`);
       }
       
-      // Also ensure it's in the detectedServiceIds array
-      if (context.detectedServiceIds && !context.detectedServiceIds.includes(serviceId)) {
-        context.detectedServiceIds.push(serviceId);
+      // Always add to detectedServiceIds if not already there
+      if (!context.detectedServiceIds.includes(validServiceId)) {
+        context.detectedServiceIds.push(validServiceId);
+        console.log(`✅ Service ID "${validServiceId}" added to detectedServiceIds`);
+      } else {
+        console.log(`ℹ️ Service ID "${validServiceId}" already in detectedServiceIds`);
       }
+      
+      // Log the current state of the detectedServiceIds array for debugging
+      console.log(`🔍 Current detectedServiceIds: ${JSON.stringify(context.detectedServiceIds)}`);
       
       return true;
     }
     
-    // If no service ID provided, try to find by name
+    // If no valid service ID provided, try to find by name
     if (serviceName) {
+      console.log(`🔍 Searching for service by name: "${serviceName}"`);
       const service = await getServiceByName(serviceName);
+      
       if (service) {
+        console.log(`✅ Found service by name: "${serviceName}" => ID: ${service.id}`);
+        
+        // Also add to detectedServiceIds array
+        if (!context.detectedServiceIds.includes(service.id)) {
+          context.detectedServiceIds.push(service.id);
+          console.log(`✅ Service ID "${service.id}" added to detectedServiceIds from name lookup`);
+        }
+        
         return await highlightService(service.id, context);
+      } else {
+        console.log(`⚠️ Could not find service with name: "${serviceName}"`);
       }
     }
     

@@ -119,6 +119,14 @@ class ScanConversationTool extends StructuredTool {
       const mentionedServices = this.extractServiceIds(message);
       console.log(`Found ${mentionedServices.length} service references in message`);
       
+      // Display detailed log of each service found for debugging
+      if (mentionedServices.length > 0) {
+        console.log(`🔍 Detailed service detection results:`);
+        mentionedServices.forEach((service, index) => {
+          console.log(`   [${index + 1}] ${service.serviceName} (${service.id}) - Match type: ${service.type}`);
+        });
+      }
+      
       // If analyze-only mode, just return the results without updating context
       if (analyzeOnly) {
         return {
@@ -143,6 +151,45 @@ class ScanConversationTool extends StructuredTool {
         };
       }
       
+      // Clear previous detectedServiceIds if this is a new detection session
+      // Only if the message appears to be setting new services, not adding to existing ones
+      const isSettingNewServices = 
+        message.toLowerCase().includes("book") || 
+        message.toLowerCase().includes("schedule") ||
+        message.toLowerCase().includes("want") ||
+        message.toLowerCase().includes("would like");
+        
+      if (isSettingNewServices && this.context.detectedServiceIds && this.context.detectedServiceIds.length > 0) {
+        console.log(`🔍 Clearing previous detected service IDs for new booking request`);
+        this.context.detectedServiceIds = [];
+      }
+      
+      // Also check for previously selected services in memory
+      if (isSettingNewServices && this.context.memory && this.context.memory.last_selected_services && this.context.memory.last_selected_services.length > 0) {
+        // Add previously selected services to the detectedServiceIds if they should be reused
+        if (message.toLowerCase().includes("same services") || 
+            message.toLowerCase().includes("those services") || 
+            message.toLowerCase().includes("these services") ||
+            message.toLowerCase().includes("same as before") ||
+            message.toLowerCase().includes("like before")) {
+          
+          console.log(`🔍 Reusing previously selected services from context.memory`);
+          
+          // Initialize detectedServiceIds if not exists
+          if (!this.context.detectedServiceIds) {
+            this.context.detectedServiceIds = [];
+          }
+          
+          // Add each previously selected service
+          this.context.memory.last_selected_services.forEach(serviceId => {
+            if (!this.context.detectedServiceIds.includes(serviceId)) {
+              this.context.detectedServiceIds.push(serviceId);
+              console.log(`✅ Added previously selected service ${serviceId} to detectedServiceIds`);
+            }
+          });
+        }
+      }
+      
       // Track mentions in context
       const trackedResults = [];
       if (mentionedServices.length > 0) {
@@ -150,6 +197,12 @@ class ScanConversationTool extends StructuredTool {
         mentionedServices.forEach(service => {
           console.log(`   🔹 Service: "${service.serviceName}" (ID: ${service.id})`);
         });
+      }
+      
+      // Initialize detectedServiceIds if it doesn't exist
+      if (!this.context.detectedServiceIds) {
+        this.context.detectedServiceIds = [];
+        console.log(`✅ Initialized detectedServiceIds array in context`);
       }
       
       // Update local context only, not global mcpContext
@@ -164,12 +217,11 @@ class ScanConversationTool extends StructuredTool {
           });
           
           // Ensure this service is in the detectedServiceIds array
-          if (!this.context.detectedServiceIds) {
-            this.context.detectedServiceIds = [];
-          }
           if (!this.context.detectedServiceIds.includes(mention.id)) {
             this.context.detectedServiceIds.push(mention.id);
             console.log(`✅ Added service ID ${mention.id} to detectedServiceIds`);
+          } else {
+            console.log(`ℹ️ Service ID ${mention.id} already in detectedServiceIds`);
           }
         } catch (error) {
           console.error(`❌ Error tracking service mention: ${mention.serviceName}`, error);
@@ -182,12 +234,16 @@ class ScanConversationTool extends StructuredTool {
         }
       }
       
+      // Log the final state of detectedServiceIds for debugging
+      console.log(`🔍 Final detectedServiceIds in context: ${JSON.stringify(this.context.detectedServiceIds)}`);
+      
       // Track tool usage in memory
       this._trackToolUsage(`Found and tracked ${mentionedServices.length} service mentions in local context`);
       
       return {
         serviceMentions: mentionedServices,
         tracked: trackedResults,
+        detectedServiceIds: this.context.detectedServiceIds, // Include in response for clarity
         message: `Found and tracked ${mentionedServices.length} service mentions in context`
       };
       
@@ -254,7 +310,7 @@ class ScanConversationTool extends StructuredTool {
       }
     }
     
-    // Check the message for service names from our service list
+    // Enhanced service name detection with more thorough pattern matching
     if (message && servicesLookup.servicesByName) {
       const messageLower = message.toLowerCase();
       
@@ -268,7 +324,8 @@ class ScanConversationTool extends StructuredTool {
         // Check if service name is in the message
         if (messageLower.includes(serviceName)) {
           // Skip if this appears to be in a historical context
-          const surroundingText = this.getSurroundingContext(message, messageLower.indexOf(serviceName), 30);
+          const matchIndex = messageLower.indexOf(serviceName);
+          const surroundingText = this.getSurroundingContext(message, matchIndex, 50);
           if (this.isHistoricalContext(surroundingText)) {
             console.log(`🔍 Skipping service "${serviceName}" in historical context: "${surroundingText}"`);
             return;
@@ -280,28 +337,61 @@ class ScanConversationTool extends StructuredTool {
             type: 'name-match'
           });
           processedIds.add(service.id);
+          console.log(`🔍 Detected service by exact name: "${service.name}" at position ${matchIndex}`);
+        }
+        
+        // Enhanced pattern matching for service names with variations
+        const serviceNameParts = serviceName.split(/\s*-\s*/);
+        if (serviceNameParts.length > 1) {
+          // Match by parts to catch phrases like "Full Set Dense Lashes" for "Lashes - Full Set - Dense"
+          const allPartsPresent = serviceNameParts.every(part => 
+            messageLower.includes(part.toLowerCase())
+          );
+          
+          if (allPartsPresent && !processedIds.has(service.id)) {
+            // Check if this is in a historical context
+            const firstPartIndex = messageLower.indexOf(serviceNameParts[0].toLowerCase());
+            const surroundingText = this.getSurroundingContext(message, firstPartIndex, 50);
+            if (this.isHistoricalContext(surroundingText)) {
+              console.log(`🔍 Skipping service with all parts "${serviceName}" in historical context: "${surroundingText}"`);
+              return;
+            }
+            
+            serviceReferences.push({
+              id: service.id,
+              serviceName: service.name,
+              type: 'parts-match'
+            });
+            processedIds.add(service.id);
+            console.log(`🔍 Detected service by parts matching: "${service.name}"`);
+          }
         }
         
         // Also check common variations (e.g., "lashes dense" for "Lashes - Full Set - Dense")
         const simplifiedName = service.name.toLowerCase().replace(/\s*-\s*/g, ' ');
         if (simplifiedName !== serviceName && messageLower.includes(simplifiedName)) {
           // Skip if this appears to be in a historical context
-          const surroundingText = this.getSurroundingContext(message, messageLower.indexOf(simplifiedName), 30);
+          const matchIndex = messageLower.indexOf(simplifiedName);
+          const surroundingText = this.getSurroundingContext(message, matchIndex, 50);
           if (this.isHistoricalContext(surroundingText)) {
             console.log(`🔍 Skipping simplified service "${simplifiedName}" in historical context: "${surroundingText}"`);
             return;
           }
           
-          serviceReferences.push({
-            id: service.id,
-            serviceName: service.name,
-            type: 'simplified-name-match'
-          });
-          processedIds.add(service.id);
+          if (!processedIds.has(service.id)) {
+            serviceReferences.push({
+              id: service.id,
+              serviceName: service.name,
+              type: 'simplified-name-match'
+            });
+            processedIds.add(service.id);
+            console.log(`🔍 Detected service by simplified name: "${service.name}" (as "${simplifiedName}")`);
+          }
         }
       });
     }
     
+    console.log(`🔍 Total services detected: ${serviceReferences.length}`);
     return serviceReferences;
   }
   
@@ -312,15 +402,25 @@ class ScanConversationTool extends StructuredTool {
     return text.substring(start, end);
   }
   
-  // Helper to determine if text appears to be in a historical context
+  // Enhanced helper to determine if text appears to be in a historical context
   isHistoricalContext(text) {
     const historicalIndicators = [
       "previous", "past", "history", "booked before", "last time", 
-      "last appointment", "appointment on", "had on", "completed on"
+      "last appointment", "appointment on", "had on", "completed on",
+      "used to", "has done", "did before", "previously had", "prior"
     ];
     
     const lowercaseText = text.toLowerCase();
-    return historicalIndicators.some(indicator => lowercaseText.includes(indicator));
+    
+    // Check for each historical indicator
+    for (const indicator of historicalIndicators) {
+      if (lowercaseText.includes(indicator)) {
+        console.log(`🔍 Historical context detected: "${indicator}" in "${text}"`);
+        return true;
+      }
+    }
+    
+    return false;
   }
   
   // Helper method to track tool usage in context memory

@@ -6,7 +6,9 @@ export function createSystemPrompt(context = {}, dateInfo) {
   const { formattedDate, isSunday, isPublicHoliday, holidayName, todayStatus } = dateInfo;
   
   const userInfo = context.memory?.user_info || 'Unknown User';
-  const lastService = context.memory?.last_selected_service || 'No service selected';
+  const lastService = context.memory?.last_selected_services?.length > 0 
+    ? context.memory.last_selected_services.join(', ') 
+    : 'No service selected';
   const preferredDate = context.memory?.preferred_date || 'No date selected';
   const preferredTime = context.memory?.preferred_time || 'No time selected';
 
@@ -65,7 +67,7 @@ APPOINTMENT BOOKING PROCESS:
 1. Ask the admin for the customer's phone number to look up using the lookupUser tool
 2. If the number is not found, ask for the customer's full name to create a new contact
 3. When customer information is displayed, clearly indicate you're showing information ABOUT the customer, not the admin
-4. Help the admin identify required services using getServiceInfo tool
+4. Help the admin identify required services using getServiceInfo tool with serviceIds as an array where serviceIds are retrived from serviceName matching in the context.
 5. Assist the admin in booking appointments on behalf of the customer using bookAppointment tool
 6. Check available slots when needed using getAvailableSlots but it cannot be in the past
 
