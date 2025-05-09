@@ -1,6 +1,11 @@
 const { StructuredTool } = require("@langchain/core/tools");
 const { z } = require("zod");
-const { getAllFormattedServices, trackServiceMention } = require('./listServices');
+const { 
+  getAllFormattedServices, 
+  trackServiceMention, 
+  getServiceByName,
+  getHighlightedServices
+} = require('./listServices');
 
 // Define the ScanServicesSchema
 const ScanServicesSchema = z.object({
@@ -8,62 +13,380 @@ const ScanServicesSchema = z.object({
   analyzeOnly: z.boolean().optional().describe("If true, only analyze but don't save to context")
 });
 
-// Singleton state for services lookup
-const servicesLookup = {
-  servicesById: null,
-  servicesByName: null,
+// Singleton cache for services data
+const servicesCache = {
+  services: null,
+  serviceNames: null,
   serviceCategories: null,
   initialized: false,
   initializing: false
 };
 
 // Initialize services once for all instances
-async function initializeServicesOnce() {
+async function initializeServicesCache() {
   // If already initializing, wait for it to complete
-  if (servicesLookup.initializing) {
-    while (servicesLookup.initializing) {
+  if (servicesCache.initializing) {
+    while (servicesCache.initializing) {
       await new Promise(resolve => setTimeout(resolve, 50));
     }
     return;
   }
   
   // If already initialized, return immediately
-  if (servicesLookup.initialized) {
+  if (servicesCache.initialized) {
     return;
   }
   
   // Set initializing flag
-  servicesLookup.initializing = true;
+  servicesCache.initializing = true;
   
   try {
+    // Get all services
     const services = await getAllFormattedServices();
     
-    // Create simple lookup maps by ID and name
-    servicesLookup.servicesById = {};
-    servicesLookup.servicesByName = {};
-    servicesLookup.serviceCategories = new Set();
+    // Create lookup data structures
+    servicesCache.services = services;
+    servicesCache.serviceNames = new Set();
+    servicesCache.serviceVariations = new Map();
+    servicesCache.serviceCategories = new Set();
     
+    // Build service name variations for lookup
     services.forEach(service => {
-      // Index by ID
-      servicesLookup.servicesById[service.id] = service;
-      
-      // Index by exact name (case-insensitive)
+      // Add main service name (lowercase for case-insensitive matching)
       const nameLower = service.name.toLowerCase();
-      servicesLookup.servicesByName[nameLower] = service;
+      servicesCache.serviceNames.add(nameLower);
       
-      // Add service category
+      // Add category to category set
       if (service.category) {
-        servicesLookup.serviceCategories.add(service.category.toLowerCase());
+        servicesCache.serviceCategories.add(service.category.toLowerCase());
       }
+      
+      // Create variations for better matching
+      const variations = [];
+      
+      // Add original name
+      variations.push(nameLower);
+      
+      // Add without hyphens (e.g., "Lashes - Full Set" -> "lashes full set")
+      const noHyphens = nameLower.replace(/\s*-\s*/g, ' ');
+      if (noHyphens !== nameLower) {
+        variations.push(noHyphens);
+      }
+      
+      // Add without category prefix (e.g., "Lashes - Full Set" -> "Full Set")
+      if (service.category && nameLower.startsWith(service.category.toLowerCase())) {
+        const withoutPrefix = nameLower.substring(service.category.length).replace(/^\s*-\s*/, '').trim();
+        if (withoutPrefix) {
+          variations.push(withoutPrefix);
+        }
+      }
+      
+      // Store variations with the service ID
+      servicesCache.serviceVariations.set(service.id, {
+        service,
+        variations
+      });
     });
     
-    servicesLookup.initialized = true;
-    console.log(`✅ Initialized services lookup with ${services.length} services`);
+    servicesCache.initialized = true;
+    console.log(`✅ Initialized services cache with ${services.length} services`);
   } catch (error) {
-    console.error('❌ Error initializing services lookup:', error);
+    console.error('❌ Error initializing services cache:', error);
   } finally {
-    servicesLookup.initializing = false;
+    servicesCache.initializing = false;
   }
+}
+
+/**
+ * Analyze text to detect if it's about appointment history
+ */
+function isAppointmentHistory(text) {
+  if (!text) return false;
+  
+  // Convert to lowercase for case-insensitive matching
+  const lowerText = text.toLowerCase();
+  
+  // Explicit markers that always indicate history content
+  if (lowerText.includes('"isappointmenthistory": true') || 
+      lowerText.includes('"arehistoricalservices": true') ||
+      lowerText.includes('"appointmenthistory": true')) {
+    return true;
+  }
+  
+  // Check for common phrases indicating appointment history
+  const historyPhrases = [
+    'appointment history',
+    'previous appointment',
+    'past appointment',
+    'appointment details',
+    'service history'
+  ];
+  
+  for (const phrase of historyPhrases) {
+    if (lowerText.includes(phrase)) {
+      return true;
+    }
+  }
+  
+  // Check for tabular format commonly used to display history
+  if (lowerText.includes('|') && 
+     (lowerText.includes('date') || lowerText.includes('time')) && 
+     (lowerText.includes('service') || lowerText.includes('treatment'))) {
+    return true;
+  }
+  
+  // Check for past tense verbs coupled with service categories, but only if not asking for new services
+  // This prevents "last time I had lashes but now I want..." from being classified as pure history
+  if (!lowerText.includes('book') && 
+      !lowerText.includes('want') && 
+      !lowerText.includes('like to') && 
+      !lowerText.includes('schedule')) {
+    
+    const pastTenseVerbs = ['had', 'got', 'received', 'done'];
+    const serviceCategories = Array.from(servicesCache.serviceCategories || ['lashes', 'facial', 'threading', 'waxing', 'skin']);
+    
+    for (const verb of pastTenseVerbs) {
+      for (const category of serviceCategories) {
+        if (lowerText.includes(`${verb} ${category}`)) {
+          return true;
+        }
+      }
+    }
+  }
+  
+  // Not detected as history
+  return false;
+}
+
+/**
+ * Detect if the user wants to reuse previous services
+ */
+function isReusingPreviousServices(text) {
+  if (!text) return false;
+  
+  // Convert to lowercase for case-insensitive matching
+  const lowerText = text.toLowerCase();
+  
+  // Check for phrases indicating reuse of previous services
+  const reusePhrases = [
+    'same as before',
+    'same service',
+    'same services',
+    'same treatment',
+    'same thing',
+    'like before',
+    'like last time',
+    'as before',
+    'as last time',
+    'again',
+    'usual'
+  ];
+  
+  for (const phrase of reusePhrases) {
+    if (lowerText.includes(phrase)) {
+      return true;
+    }
+  }
+  
+  // Not detected as reusing previous services
+  return false;
+}
+
+/**
+ * Extract service mentions from text
+ */
+async function extractServiceMentions(text) {
+  if (!text || !servicesCache.initialized) {
+    return [];
+  }
+  
+  // Ensure services are initialized
+  await initializeServicesCache();
+  
+  const results = [];
+  const foundServiceIds = new Set();
+  const lowerText = text.toLowerCase();
+  
+  console.log(`🔍 Extracting service mentions from: "${text.substring(0, 100)}${text.length > 100 ? '...' : ''}"`);
+  
+  // 1. First check for explicit service IDs
+  const serviceIdPattern = /service:(\d+(?:-\d+)?)/g;
+  let match;
+  while ((match = serviceIdPattern.exec(text)) !== null) {
+    const serviceId = `service:${match[1]}`;
+    
+    console.log(`🔍 Found explicit service ID: ${serviceId}`);
+    
+    // Skip if already found
+    if (foundServiceIds.has(serviceId)) {
+      continue;
+    }
+    
+    // Find service details
+    const serviceData = servicesCache.services.find(s => s.id === serviceId);
+    if (serviceData) {
+      results.push({
+        id: serviceId,
+        serviceName: serviceData.name,
+        type: 'explicit-id'
+      });
+      foundServiceIds.add(serviceId);
+    } else {
+      // If we can't find details but it looks like a valid ID, include it anyway
+      results.push({
+        id: serviceId,
+        serviceName: `Unknown Service (${serviceId})`,
+        type: 'explicit-id-unknown'
+      });
+      foundServiceIds.add(serviceId);
+    }
+  }
+  
+  // 2. Specific service type detection with specific qualifiers
+  const serviceDetectors = [
+    // Lashes full set
+    {
+      check: (text) => {
+        const match = text.match(/\b(full\s*set\s*(lashes?|extension))|((lashes?|extension)\s*full\s*set)\b/i);
+        return match ? { detected: true, type: 'full-set', match: match[0] } : { detected: false };
+      },
+      getServices: () => servicesCache.services.filter(s => 
+        s.category === 'Lashes' && s.name.toLowerCase().includes('full set')
+      )
+    },
+    // Lashes touch up
+    {
+      check: (text) => {
+        const match = text.match(/\b(touch\s*up\s*(lashes?|extension))|((lashes?|extension)\s*touch\s*up)\b/i);
+        return match ? { detected: true, type: 'touch-up', match: match[0] } : { detected: false };
+      },
+      getServices: () => servicesCache.services.filter(s => 
+        s.category === 'Lashes' && s.name.toLowerCase().includes('touch up')
+      )
+    },
+    // Lashes removal
+    {
+      check: (text) => {
+        const match = text.match(/\b(lash(es)?\s*removal)|(remove\s*lash(es)?)\b/i);
+        return match ? { detected: true, type: 'removal', match: match[0] } : { detected: false };
+      },
+      getServices: () => servicesCache.services.filter(s => 
+        s.category === 'Lashes' && s.name.toLowerCase().includes('removal')
+      )
+    },
+    // Facial specific types
+    {
+      check: (text) => {
+        const specificTypes = ['radiance', 'treatment', 'hydrating', 'acne'];
+        for (const type of specificTypes) {
+          const match = text.match(new RegExp(`\\b(${type}\\s*facial)|(facial\\s*${type})\\b`, 'i'));
+          if (match) {
+            return { detected: true, type: type, match: match[0] };
+          }
+        }
+        return { detected: false };
+      },
+      getServices: (type) => servicesCache.services.filter(s => 
+        s.category === 'Facial' && s.name.toLowerCase().includes(type)
+      )
+    },
+    // Threading specific areas
+    {
+      check: (text) => {
+        const areas = ['eyebrow', 'upper lip', 'lower lip', 'full face'];
+        for (const area of areas) {
+          const match = text.match(new RegExp(`\\b(${area.replace(/\s+/g, '\\s*')}\\s*threading)|(threading\\s*${area.replace(/\s+/g, '\\s*')})\\b`, 'i'));
+          if (match) {
+            return { detected: true, type: area, match: match[0] };
+          }
+        }
+        return { detected: false };
+      },
+      getServices: (type) => servicesCache.services.filter(s => 
+        s.category === 'Threading' && s.name.toLowerCase().includes(type)
+      )
+    },
+    // Waxing specific areas
+    {
+      check: (text) => {
+        const areas = ['full arm', 'half arm', 'full leg', 'half leg', 'underarm', 'full face'];
+        for (const area of areas) {
+          const match = text.match(new RegExp(`\\b(${area.replace(/\s+/g, '\\s*')}\\s*waxing)|(waxing\\s*${area.replace(/\s+/g, '\\s*')})|(${area.replace(/\s+/g, '\\s*')}\\s*wax)\\b`, 'i'));
+          if (match) {
+            return { detected: true, type: area, match: match[0] };
+          }
+        }
+        return { detected: false };
+      },
+      getServices: (type) => servicesCache.services.filter(s => 
+        s.category === 'Waxing' && s.name.toLowerCase().includes(type)
+      )
+    }
+  ];
+  
+  // Apply each detector
+  for (const detector of serviceDetectors) {
+    const detection = detector.check(lowerText);
+    if (detection.detected) {
+      console.log(`🔍 Found specific service: "${detection.match}" (${detection.type})`);
+      
+      // Get relevant services
+      let matchingServices = detector.getServices(detection.type);
+      
+      // Limit to 2 most relevant services
+      if (matchingServices.length > 2) {
+        matchingServices = matchingServices.slice(0, 2);
+      }
+      
+      // Add each service to results
+      for (const service of matchingServices) {
+        if (!foundServiceIds.has(service.id)) {
+          results.push({
+            id: service.id,
+            serviceName: service.name,
+            type: `specific-${detection.type}`
+          });
+          foundServiceIds.add(service.id);
+        }
+      }
+    }
+  }
+  
+  // 3. Generic category matches as a fallback if nothing more specific is found
+  if (results.length === 0) {
+    // Check for generic service categories
+    const categoryMatches = [
+      { regex: /\b(lash(es)?|extension)\b/i, category: 'Lashes' },
+      { regex: /\bfacial\b/i, category: 'Facial' },
+      { regex: /\bthreading\b/i, category: 'Threading' },
+      { regex: /\bwax(ing)?\b/i, category: 'Waxing' },
+      { regex: /\bskin\b/i, category: 'Skin' }
+    ];
+    
+    for (const { regex, category } of categoryMatches) {
+      if (lowerText.match(regex)) {
+        console.log(`🔍 Found generic category mention: "${category}"`);
+        
+        // Get the most common/popular service in this category
+        const categoryServices = servicesCache.services
+          .filter(service => service.category === category)
+          .slice(0, 1); // Just get the first one
+        
+        for (const service of categoryServices) {
+          if (!foundServiceIds.has(service.id)) {
+            results.push({
+              id: service.id,
+              serviceName: service.name,
+              type: 'category-match'
+            });
+            foundServiceIds.add(service.id);
+          }
+        }
+      }
+    }
+  }
+  
+  return results;
 }
 
 /**
@@ -80,10 +403,8 @@ class ScanServicesTool extends StructuredTool {
     this.context = context;
     this.sessionId = sessionId;
     
-    // Initialize services if needed
-    if (!servicesLookup.initialized && !servicesLookup.initializing) {
-      initializeServicesOnce();
-    }
+    // Initialize services cache
+    initializeServicesCache();
   }
   
   async _call(inputs) {
@@ -91,135 +412,112 @@ class ScanServicesTool extends StructuredTool {
     const { message, analyzeOnly = false } = inputs;
     
     try {
-      // Make sure we have services lookup initialized
-      if (!servicesLookup.initialized) {
-        await initializeServicesOnce();
-      }
+      // Ensure services cache is initialized
+      await initializeServicesCache();
       
-      // Simple detection for history data using a clear marker
-      // Look for a standard attribute that will be present in all history responses
-      const isHistoricalData = 
-        message.includes('"isAppointmentHistory": true') || 
-        message.includes('"areHistoricalServices": true') ||
-        message.includes('"appointmentHistory": true');
-      
-      if (isHistoricalData) {
-        console.log(`🔍 Message contains explicit appointment history marker - skipping service detection`);
+      // First check if user wants to reuse previous services (check this before history check)
+      if (isReusingPreviousServices(message) && 
+          this.context.memory && 
+          this.context.memory.last_selected_services && 
+          this.context.memory.last_selected_services.length > 0) {
+          
+        console.log(`🔍 User wants to reuse previous services`);
+        
+        // Initialize detectedServiceIds if not exists
+        if (!this.context.detectedServiceIds) {
+          this.context.detectedServiceIds = [];
+        }
+        
+        // Get service details for the response
+        const reusedServices = [];
+        for (const serviceId of this.context.memory.last_selected_services) {
+          // Add to detectedServiceIds if not already there
+          if (!this.context.detectedServiceIds.includes(serviceId)) {
+            this.context.detectedServiceIds.push(serviceId);
+            console.log(`✅ Added previously selected service ${serviceId} to detectedServiceIds`);
+          }
+          
+          // Find service details
+          const service = servicesCache.services.find(s => s.id === serviceId);
+          if (service) {
+            reusedServices.push({
+              id: serviceId,
+              serviceName: service.name,
+              type: 'reused'
+            });
+          } else {
+            // Add placeholder if service data isn't found
+            reusedServices.push({
+              id: serviceId,
+              serviceName: `Service ${serviceId}`,
+              type: 'reused'
+            });
+          }
+        }
+        
         return {
-          serviceMentions: [],
-          skippedDetection: true,
-          message: `Skipped service detection for appointment history data`
+          serviceMentions: reusedServices,
+          detectedServiceIds: this.context.detectedServiceIds,
+          message: `Reusing ${reusedServices.length} services from last selection`,
+          isReusing: true
         };
       }
       
-      // Extract service IDs from the message using regex and service name matching
-      const mentionedServices = this.extractServiceIds(message);
-      console.log(`Found ${mentionedServices.length} service references in message`);
+      // Then check if this is appointment history
+      if (isAppointmentHistory(message)) {
+        console.log(`🔍 Message detected as appointment history - skipping service detection`);
+        return {
+          serviceMentions: [],
+          skippedDetection: true,
+          message: `Skipped service detection for appointment history data`,
+          isHistory: true
+        };
+      }
       
-      // Display detailed log of each service found for debugging
-      if (mentionedServices.length > 0) {
-        console.log(`🔍 Detailed service detection results:`);
-        mentionedServices.forEach((service, index) => {
+      // Extract services from the message
+      const serviceMentions = await extractServiceMentions(message);
+      console.log(`Found ${serviceMentions.length} service mentions in message`);
+      
+      // Log details for debugging
+      if (serviceMentions.length > 0) {
+        console.log(`🔍 Service detection results:`);
+        serviceMentions.forEach((service, index) => {
           console.log(`   [${index + 1}] ${service.serviceName} (${service.id}) - Match type: ${service.type}`);
         });
       }
       
-      // If analyze-only mode, just return the results without updating context
+      // If analyze-only mode, just return results without updating context
       if (analyzeOnly) {
         return {
-          serviceMentions: mentionedServices,
-          message: `Found ${mentionedServices.length} service references (analyze-only mode)`
+          serviceMentions,
+          message: `Found ${serviceMentions.length} service mentions (analyze-only mode)`
         };
-      }
-      
-      // Check if the message itself indicates it's just displaying historical data
-      const isDisplayingHistory = 
-        message.toLowerCase().includes("appointment history for") || 
-        message.toLowerCase().includes("previous appointments") ||
-        message.toLowerCase().includes("past appointments") ||
-        message.toLowerCase().includes("appointment details");
-        
-      if (isDisplayingHistory) {
-        console.log(`🔍 Message is displaying appointment history - skipping context updates`);
-        return {
-          serviceMentions: mentionedServices,
-          skippedContextUpdate: true,
-          message: `Detected services but skipped context updates for appointment history display`
-        };
-      }
-      
-      // Clear previous detectedServiceIds if this is a new detection session
-      // Only if the message appears to be setting new services, not adding to existing ones
-      const isSettingNewServices = 
-        message.toLowerCase().includes("book") || 
-        message.toLowerCase().includes("schedule") ||
-        message.toLowerCase().includes("want") ||
-        message.toLowerCase().includes("would like");
-        
-      if (isSettingNewServices && this.context.detectedServiceIds && this.context.detectedServiceIds.length > 0) {
-        console.log(`🔍 Clearing previous detected service IDs for new booking request`);
-        this.context.detectedServiceIds = [];
-      }
-      
-      // Also check for previously selected services in memory
-      if (isSettingNewServices && this.context.memory && this.context.memory.last_selected_services && this.context.memory.last_selected_services.length > 0) {
-        // Add previously selected services to the detectedServiceIds if they should be reused
-        if (message.toLowerCase().includes("same services") || 
-            message.toLowerCase().includes("those services") || 
-            message.toLowerCase().includes("these services") ||
-            message.toLowerCase().includes("same as before") ||
-            message.toLowerCase().includes("like before")) {
-          
-          console.log(`🔍 Reusing previously selected services from context.memory`);
-          
-          // Initialize detectedServiceIds if not exists
-          if (!this.context.detectedServiceIds) {
-            this.context.detectedServiceIds = [];
-          }
-          
-          // Add each previously selected service
-          this.context.memory.last_selected_services.forEach(serviceId => {
-            if (!this.context.detectedServiceIds.includes(serviceId)) {
-              this.context.detectedServiceIds.push(serviceId);
-              console.log(`✅ Added previously selected service ${serviceId} to detectedServiceIds`);
-            }
-          });
-        }
-      }
-      
-      // Track mentions in context
-      const trackedResults = [];
-      if (mentionedServices.length > 0) {
-        console.log(`🔍 Detected services in message:`);
-        mentionedServices.forEach(service => {
-          console.log(`   🔹 Service: "${service.serviceName}" (ID: ${service.id})`);
-        });
       }
       
       // Initialize detectedServiceIds if it doesn't exist
       if (!this.context.detectedServiceIds) {
         this.context.detectedServiceIds = [];
-        console.log(`✅ Initialized detectedServiceIds array in context`);
       }
       
-      // Update local context only, not global mcpContext
-      for (const mention of mentionedServices) {
+      // If this looks like a booking request (contains booking-related terms)
+      // and we already have some services detected, clear existing ones
+      const isNewBookingRequest = message.toLowerCase().match(/\b(book|schedule|appoint|want|like)\b/i);
+      if (isNewBookingRequest && this.context.detectedServiceIds.length > 0) {
+        console.log(`🔍 New booking request detected - clearing previous service selections`);
+        this.context.detectedServiceIds = [];
+      }
+      
+      // Track each service mention in context
+      const trackedResults = [];
+      for (const mention of serviceMentions) {
         try {
-          // Pass both service name and ID to ensure accurate tracking
+          // Track the service mention
           const result = await trackServiceMention(mention.serviceName, this.context, mention.id);
           trackedResults.push({
             serviceName: mention.serviceName,
             serviceId: mention.id,
             success: result
           });
-          
-          // Ensure this service is in the detectedServiceIds array
-          if (!this.context.detectedServiceIds.includes(mention.id)) {
-            this.context.detectedServiceIds.push(mention.id);
-            console.log(`✅ Added service ID ${mention.id} to detectedServiceIds`);
-          } else {
-            console.log(`ℹ️ Service ID ${mention.id} already in detectedServiceIds`);
-          }
         } catch (error) {
           console.error(`❌ Error tracking service mention: ${mention.serviceName}`, error);
           trackedResults.push({
@@ -234,260 +532,27 @@ class ScanServicesTool extends StructuredTool {
       // Log the final state of detectedServiceIds for debugging
       console.log(`🔍 Final detectedServiceIds in context: ${JSON.stringify(this.context.detectedServiceIds)}`);
       
-      // Track tool usage in memory
-      this._trackToolUsage(`Found and tracked ${mentionedServices.length} service mentions in local context`);
+      // Track tool usage
+      this._trackToolUsage(`Found and tracked ${serviceMentions.length} service mentions in context`);
       
       return {
-        serviceMentions: mentionedServices,
+        serviceMentions,
         tracked: trackedResults,
-        detectedServiceIds: this.context.detectedServiceIds, // Include in response for clarity
-        message: `Found and tracked ${mentionedServices.length} service mentions in context`
+        detectedServiceIds: this.context.detectedServiceIds,
+        message: `Found and tracked ${serviceMentions.length} service mentions in context`
       };
       
     } catch (error) {
-      console.error('❌ Error scanning conversation:', error);
+      console.error('❌ Error scanning for services:', error);
       
-      // Track error in tool usage
+      // Track error
       this._trackToolUsage(`Error: ${error.message}`);
       
       throw error;
     }
   }
   
-  // Extract service IDs from the message using regex and service name matching
-  extractServiceIds(message) {
-    if (!message || !servicesLookup.servicesById) {
-      return [];
-    }
-    
-    // Skip service detection in specific contexts related to appointment history
-    const skipContexts = [
-      "appointment history",
-      "previous appointment",
-      "past appointment",
-      "customer's appointments",
-      "has previously booked",
-      "has had appointments"
-    ];
-    
-    const lowercaseMsg = message.toLowerCase();
-    for (const skipContext of skipContexts) {
-      if (lowercaseMsg.includes(skipContext)) {
-        console.log(`🔍 Skipping service detection in "${skipContext}" context`);
-        return [];
-      }
-    }
-    
-    const serviceReferences = [];
-    const processedIds = new Set();
-    
-    // Check for explicit service IDs (both service:X and service:X-YYYY formats)
-    const serviceIdPattern = /(service:\d+(?:-\d+)?)/g;
-    const serviceIdMatches = [...message.matchAll(serviceIdPattern)];
-    
-    // Extract all service IDs mentioned directly in the text
-    for (const match of serviceIdMatches) {
-      const serviceId = match[1];
-      
-      // Skip if this appears to be in a historical context
-      const surroundingText = this.getSurroundingContext(message, match.index, 30);
-      if (this.isHistoricalContext(surroundingText)) {
-        console.log(`🔍 Skipping service ID ${serviceId} in historical context: "${surroundingText}"`);
-        continue;
-      }
-      
-      if (!processedIds.has(serviceId)) {
-        const service = servicesLookup.servicesById[serviceId];
-        serviceReferences.push({
-          id: serviceId,
-          serviceName: service ? service.name : `Service ${serviceId}`,
-          type: 'explicit-id'
-        });
-        processedIds.add(serviceId);
-      }
-    }
-    
-    // Enhanced service name detection with more thorough pattern matching
-    if (message && servicesLookup.servicesByName) {
-      const messageLower = message.toLowerCase();
-      
-      // Check each service in our service list
-      Object.entries(servicesLookup.servicesByName).forEach(([serviceName, service]) => {
-        // Skip if already processed
-        if (processedIds.has(service.id)) {
-          return;
-        }
-        
-        // Check if service name is in the message
-        if (messageLower.includes(serviceName)) {
-          // Skip if this appears to be in a historical context
-          const matchIndex = messageLower.indexOf(serviceName);
-          const surroundingText = this.getSurroundingContext(message, matchIndex, 50);
-          if (this.isHistoricalContext(surroundingText)) {
-            console.log(`🔍 Skipping service "${serviceName}" in historical context: "${surroundingText}"`);
-            return;
-          }
-          
-          serviceReferences.push({
-            id: service.id,
-            serviceName: service.name,
-            type: 'name-match'
-          });
-          processedIds.add(service.id);
-          console.log(`🔍 Detected service by exact name: "${service.name}" at position ${matchIndex}`);
-        }
-        
-        // Enhanced pattern matching for service names with variations
-        const serviceNameParts = serviceName.split(/\s*-\s*/);
-        if (serviceNameParts.length > 1) {
-          // Match by parts to catch phrases like "Full Set Dense Lashes" for "Lashes - Full Set - Dense"
-          const allPartsPresent = serviceNameParts.every(part => 
-            messageLower.includes(part.toLowerCase())
-          );
-          
-          if (allPartsPresent && !processedIds.has(service.id)) {
-            // Check if this is in a historical context
-            const firstPartIndex = messageLower.indexOf(serviceNameParts[0].toLowerCase());
-            const surroundingText = this.getSurroundingContext(message, firstPartIndex, 50);
-            if (this.isHistoricalContext(surroundingText)) {
-              console.log(`🔍 Skipping service with all parts "${serviceName}" in historical context: "${surroundingText}"`);
-              return;
-            }
-            
-            serviceReferences.push({
-              id: service.id,
-              serviceName: service.name,
-              type: 'parts-match'
-            });
-            processedIds.add(service.id);
-            console.log(`🔍 Detected service by parts matching: "${service.name}"`);
-          }
-        }
-        
-        // Also check common variations (e.g., "lashes dense" for "Lashes - Full Set - Dense")
-        const simplifiedName = service.name.toLowerCase().replace(/\s*-\s*/g, ' ');
-        if (simplifiedName !== serviceName && messageLower.includes(simplifiedName)) {
-          // Skip if this appears to be in a historical context
-          const matchIndex = messageLower.indexOf(simplifiedName);
-          const surroundingText = this.getSurroundingContext(message, matchIndex, 50);
-          if (this.isHistoricalContext(surroundingText)) {
-            console.log(`🔍 Skipping simplified service "${simplifiedName}" in historical context: "${surroundingText}"`);
-            return;
-          }
-          
-          if (!processedIds.has(service.id)) {
-            serviceReferences.push({
-              id: service.id,
-              serviceName: service.name,
-              type: 'simplified-name-match'
-            });
-            processedIds.add(service.id);
-            console.log(`🔍 Detected service by simplified name: "${service.name}" (as "${simplifiedName}")`);
-          }
-        }
-      });
-    }
-    
-    console.log(`🔍 Total services detected: ${serviceReferences.length}`);
-    return serviceReferences;
-  }
-  
-  // Helper to get text surrounding a match position
-  getSurroundingContext(text, position, contextSize = 30) {
-    const start = Math.max(0, position - contextSize);
-    const end = Math.min(text.length, position + contextSize);
-    return text.substring(start, end);
-  }
-  
-  // Enhanced helper to determine if text appears to be in a historical context
-  isHistoricalContext(text) {
-    // Extract a clean version of the text for analysis
-    const lowercaseText = text.toLowerCase();
-    
-    // 1. Check for explicit historical phrases 
-    const historicalPhrases = [
-      "previous appointment", "past appointment", "appointment history", 
-      "booked before", "last time", "last appointment", "appointment on", 
-      "had on", "completed on", "used to", "has done", "did before", 
-      "previously had", "prior service", "last visit", "previous service",
-      "has received", "got done", "already had", "earlier appointment"
-    ];
-    
-    for (const phrase of historicalPhrases) {
-      if (lowercaseText.includes(phrase)) {
-        console.log(`🔍 Historical phrase detected: "${phrase}" in context`);
-        return true;
-      }
-    }
-    
-    // 2. Check for temporal words indicating past events
-    const pastIndicators = [
-      "was", "were", "had", "received", "enjoyed", "experienced",
-      "came in for", "underwent", "chose", "selected", "opted for"
-    ];
-    
-    const serviceRelatedWords = [
-      "service", "treatment", "appointment", "session", "procedure", 
-      "facial", "lashes", "waxing", "threading"
-    ];
-    
-    // Check for combinations of past indicators with service-related words
-    for (const pastWord of pastIndicators) {
-      for (const serviceWord of serviceRelatedWords) {
-        const pattern = `${pastWord} ${serviceWord}`;
-        if (lowercaseText.includes(pattern)) {
-          console.log(`🔍 Past-tense service pattern detected: "${pattern}" in context`);
-          return true;
-        }
-      }
-    }
-    
-    // 3. Check for date-related patterns in the past
-    const datePatterns = [
-      /on \d{1,2}(st|nd|rd|th)?( of)? (jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i,
-      /in (jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)( \d{4})?/i,
-      /\d{1,2}\/\d{1,2}(\/\d{2,4})?/,  // Date formats like 03/15, 03/15/23
-      /last (week|month|year|time)/i
-    ];
-    
-    for (const pattern of datePatterns) {
-      if (pattern.test(lowercaseText)) {
-        console.log(`🔍 Historical date pattern detected in context`);
-        return true;
-      }
-    }
-    
-    // 4. Check for specific sentence structures indicating history
-    const sentenceStructures = [
-      /when (she|he|they|the customer) came in/i,
-      /customer('s)? last visit/i,
-      /customer has been coming for/i,
-      /history shows/i,
-      /record indicates/i,
-      /according to (her|his|their) history/i
-    ];
-    
-    for (const pattern of sentenceStructures) {
-      if (pattern.test(lowercaseText)) {
-        console.log(`🔍 Historical sentence structure detected in context`);
-        return true;
-      }
-    }
-    
-    // 5. Check for table-like structures often used in appointment histories
-    if ((lowercaseText.includes('date') && lowercaseText.includes('time') && 
-         lowercaseText.includes('service')) ||
-        (lowercaseText.includes('|') && 
-         (lowercaseText.includes('date') || lowercaseText.includes('appointment')))) {
-      console.log(`🔍 Tabular appointment history structure detected`);
-      return true;
-    }
-    
-    // Not detected as historical context
-    return false;
-  }
-  
-  // Helper method to track tool usage in context memory
+  // Helper to track tool usage in context memory
   _trackToolUsage(result) {
     if (this.context && this.context.memory) {
       if (!this.context.memory.tool_usage) {
@@ -506,13 +571,13 @@ class ScanServicesTool extends StructuredTool {
   }
 }
 
-// Factory function to create the tool
+// Factory function to create tool instance
 function createScanServicesTool(context, sessionId) {
   return new ScanServicesTool(context, sessionId);
 }
 
 // Initialize services at module load time
-initializeServicesOnce();
+initializeServicesCache();
 
 module.exports = {
   ScanServicesTool,

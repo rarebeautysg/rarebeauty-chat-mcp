@@ -152,4 +152,52 @@ To use this server with the main application:
 
 1. Update the Socket.IO configuration in the client to point to this server
 2. Update AI endpoints to call into this service for context information
-3. Configure proper CORS settings 
+3. Configure proper CORS settings
+
+## Service Detection System
+
+The service detection system in this application identifies beauty services mentioned in chat messages. It's responsible for distinguishing between:
+
+1. Messages about appointment history
+2. Messages about booking new services
+3. Messages about reusing previously selected services
+
+### Key Features
+
+- **History Detection**: Identifies appointment history information to avoid treating historical service mentions as new booking requests
+- **Service Identification**: Uses pattern matching to identify specific beauty services mentioned in messages
+- **Previous Service Reuse**: Detects when a user wants to reuse previously selected services
+- **Explicit Service IDs**: Handles cases where services are referenced by specific IDs
+
+### How It Works
+
+The system follows this workflow:
+
+1. First checks if the user wants to reuse previous services with phrases like "same as before"
+2. Determines if the message is about appointment history
+3. If not history or reuse, it extracts service mentions from the text using:
+   - Explicit service ID detection (e.g., service:123)
+   - Specific service pattern matching for various categories (lashes, facial, etc.)
+   - Generic category matching as a fallback
+
+### Implementation
+
+The main implementation is in `src/tools/scanServices.js`, which provides:
+
+- `ScanServicesTool` - LangChain tool for detecting services in messages
+- Service pattern matching using regular expressions
+- History detection using text pattern analysis
+- Context tracking to manage user service selections
+
+### Example
+
+When a user says:
+```
+I'd like to book a full set lashes appointment for next Tuesday
+```
+
+The system will:
+1. Determine this is NOT appointment history
+2. Extract "full set lashes" as a specific service type
+3. Find the relevant Lashes - Full Set services
+4. Track these detected services in the conversation context 
