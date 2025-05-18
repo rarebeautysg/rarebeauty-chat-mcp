@@ -1,8 +1,26 @@
 // System prompt for the Rare Beauty chat assistant
 // This is now a template function that accepts date parameters
+const fs = require('fs');
+const path = require('path');
+
+// Function to read service selection guidance
+function getServiceSelectionGuidance() {
+  try {
+    const serviceSelectionPath = path.join(__dirname, 'service-selection.txt');
+    if (fs.existsSync(serviceSelectionPath)) {
+      return fs.readFileSync(serviceSelectionPath, 'utf8');
+    }
+  } catch (err) {
+    console.error('Error reading service-selection.txt:', err);
+  }
+  return ''; // Empty string if file doesn't exist or there's an error
+}
+
+// Get service selection guidance
+const serviceSelectionGuidance = getServiceSelectionGuidance();
 
 // Create system prompt with date parameters
-export function createSystemPrompt(context = {}, dateInfo) {
+function createSystemPrompt(context = {}, dateInfo) {
   const { formattedDate, isSunday, isPublicHoliday, holidayName, todayStatus } = dateInfo;
   
   // Add default values for memory variables
@@ -99,7 +117,12 @@ STEPS TO FOLLOW TO BOOK AN APPOINTMENT:
    - DO NOT assume those services are what the customer wants to book now
 3. ⚠️ CRITICAL: Services from appointment history are FOR INFORMATION ONLY and will NOT be detected by the system
 4. ALWAYS ask explicitly which service the customer wants now, even if they've had the same service before
-5. Next, ask what service the customer wants to book, if they don't know, ask them to choose from the list of services by using getServices.
+5. When the customer mentions specific services:
+   - FIRST respond naturally to acknowledge their request
+   - THEN use the selectServices tool with the serviceNames parameter to select services
+   - Example: selectServices({ serviceNames: ["lashes natural", "facial treatment"] })
+   - IMPORTANT: There is NO automatic service detection - YOU must call selectServices explicitly
+   - Present selected services in clean bullet points when confirming
 6. CRITICAL: For booking, you MUST use the EXACT serviceId value (like "service:2-2024") from the getServices response. DO NOT modify, reformat or interpret the serviceId. The serviceId is in the "id" field of each service object.
 7. The customer can book multiple services in one appointment, so after the service is known, ask for the date and time of the appointment.
 8. CRITICAL DATE CHECK: Before proceeding with any booking or slot check, VERIFY that the requested date is not a Sunday or public holiday. If it is, STOP and inform the customer we're closed.
@@ -132,8 +155,11 @@ IMPORTANT - EXACT TOOL NAMES:
 The tools available to you have these EXACT names. Do not add or change any part:
 - lookupUser - for looking up customer by phone number and retrieving their appointment history. Phone numbers usually start with 8 or 9 and are 8 digits, for Singapore mobile they might come with a prefix of +65 or 65.
 - getServices - for getting service information
+- selectServices - for recording selected services for booking
 - bookAppointment - for booking appointments
 - getAvailableSlots - for checking available time slots
+
+${serviceSelectionGuidance}
 
 IMPORTANT - ABOUT AVAILABLE SLOTS:
 - Only show available slots if the initial booking was not successful.
@@ -168,7 +194,7 @@ Never display services as a simple list with colons. Always use markdown tables 
 }
 
 // For backward compatibility
-export const systemPrompt = createSystemPrompt({}, {
+const systemPrompt = createSystemPrompt({}, {
   formattedDate: new Date().toLocaleDateString('en-US', {
     year: 'numeric',
     month: 'long',
@@ -179,3 +205,9 @@ export const systemPrompt = createSystemPrompt({}, {
   holidayName: null,
   todayStatus: new Date().getDay() === 0 ? "Today is Sunday and we are CLOSED." : "We are OPEN today."
 });
+
+// Export the function
+module.exports = {
+  createSystemPrompt,
+  systemPrompt
+};

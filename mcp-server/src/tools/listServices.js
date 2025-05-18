@@ -62,20 +62,35 @@ async function fetchServicesFromSOHO() {
     
     console.log(`✅ Successfully fetched ${result.data.services.length} services from SOHO API`);
     
-    // Log a few examples of service IDs for debugging
-    // if (result.data.services.length > 0) {
-    //   console.log('📋 Sample service IDs from SOHO API:');
-    //   const sampleSize = Math.min(5, result.data.services.length);
-    //   for (let i = 0; i < result.data.services.length; i++) {
-    //     const service = result.data.services[i];
-    //     console.log(`   - ID: ${service.id}, Name: ${service.service}`);
-    //   }
-    // }
-    
     return result.data.services;
   } catch (error) {
     console.error('❌ Error fetching services from SOHO API:', error);
     throw error;
+  }
+}
+
+// Initialize services cache at startup
+async function initializeServicesCache() {
+  console.log('📋 initializeServicesCache called');
+  try {
+    const services = await getServices(true); // Force refresh
+    console.log(`✅ Initialized services cache with ${services.length} services`);
+    
+    // Log some example services with their IDs for reference
+    if (services.length > 0) {
+      console.log('📊 Service matching improved with advanced fuzzy search');
+      console.log('📊 Example services in cache:');
+      const sampleSize = Math.min(5, services.length);
+      for (let i = 0; i < sampleSize; i++) {
+        const service = services[i];
+        console.log(`   - ID: ${service.id}, Name: ${service.service}`);
+      }
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('❌ Error initializing services cache:', error);
+    return false;
   }
 }
 
@@ -167,10 +182,6 @@ const categorizeServices = (services) => {
 async function getAllFormattedServices(forceRefresh = false) {
   const now = Date.now();
   
-  // Add debug stack trace to see who's calling this function
-  const stackTrace = new Error().stack;
-  console.log(`📋 getAllFormattedServices called from: ${stackTrace.split('\n')[2]?.trim() || 'unknown'}`);
-  
   // Check if we need to refresh the processed cache
   if (forceRefresh || processedServicesCache.length === 0 || now - processedLastFetched > CACHE_DURATION) {
     console.log('🔄 Building processed services cache');
@@ -203,22 +214,21 @@ async function getAllFormattedServices(forceRefresh = false) {
       processedServicesCache = result;
       processedLastFetched = now;
       
+      console.log(`✅ Processed ${result.length} services into formatted cache`);
       return result;
     } catch (error) {
-      console.error('❌ Error building processed services cache:', error);
+      console.error('❌ Error processing services:', error);
       
-      // If we have a stale cache, use it rather than failing
+      // If we have a stale cache, use it as fallback
       if (processedServicesCache.length > 0) {
-        console.log('⚠️ Using stale processed services cache');
+        console.log('⚠️ Using stale processed services cache due to error');
         return processedServicesCache;
       }
       
-      // Generate minimal fallback data
-      console.log('⚠️ Generating minimal fallback data - API unavailable');
-      return [];
+      throw error;
     }
   } else {
-    console.log('📝 Using cached processed services data');
+    console.log(`📝 Using cached processed services (${processedServicesCache.length} items)`);
     return processedServicesCache;
   }
 }
@@ -296,21 +306,44 @@ async function getServiceById(serviceId) {
   }
 }
 
-// Find a service by name (exact or partial match)
+// Find a service by name (exact or direct match)
 async function getServiceByName(serviceName) {
   try {
     const services = await getAllFormattedServices();
     
+    // Normalize the search query
+    const normalizedQuery = serviceName.toLowerCase().trim();
+    console.log(`🔍 Searching for service by normalized name: "${normalizedQuery}"`);
+    
     // Try exact match first (case-insensitive)
     let service = services.find(s => 
-      s.name.toLowerCase() === serviceName.toLowerCase()
+      s.name.toLowerCase() === normalizedQuery
     );
     
     if (!service) {
-      // Try partial match
+      // Try direct partial match (service name contains the search query)
       service = services.find(s => 
-        s.name.toLowerCase().includes(serviceName.toLowerCase())
+        s.name.toLowerCase().includes(normalizedQuery)
       );
+    }
+    
+    // If still no match, try simple word matching
+    if (!service) {
+      // Split the service name and query into words for better matching
+      const queryWords = normalizedQuery.split(/\s+/).filter(w => w.length > 2);
+      
+      if (queryWords.length > 0) {
+        // Find services where at least one significant word matches
+        const potentialMatches = services.filter(s => {
+          const serviceNameLower = s.name.toLowerCase();
+          return queryWords.some(word => serviceNameLower.includes(word));
+        });
+        
+        // Sort by number of matching words
+        if (potentialMatches.length > 0) {
+          service = potentialMatches[0];
+        }
+      }
     }
     
     if (!service) {
@@ -318,6 +351,7 @@ async function getServiceByName(serviceName) {
       return null;
     }
     
+    console.log(`✅ Selected service match: "${service.name}" (${service.id})`);
     return service;
   } catch (error) {
     console.error(`❌ Error getting service by name "${serviceName}":`, error);
@@ -421,10 +455,11 @@ async function trackServiceMention(serviceName, context, serviceId) {
       console.log('✅ Initialized detectedServiceIds array in context');
     }
     
-    // Validate serviceId format (if provided)
-    let validServiceId = serviceId;
-    
+    // If a specific serviceId is provided, process it directly
     if (serviceId) {
+      // Validate serviceId format (if provided)
+      let validServiceId = serviceId;
+      
       // Ensure service ID has correct format
       if (!serviceId.startsWith('service:')) {
         if (/^\d+(-\d+)?$/.test(serviceId)) {
@@ -435,54 +470,68 @@ async function trackServiceMention(serviceName, context, serviceId) {
           validServiceId = null;
         }
       }
-    }
     
-    // If we have a valid service ID (either from the input or corrected)
-    if (validServiceId) {
-      console.log(`🔍 Processing service ID: ${validServiceId}`);
-      
-      // Get service info for additional context
-      const services = await getAllFormattedServices();
-      const serviceInfo = services.find(s => s.id === validServiceId);
-      
-      // Add to highlighted services if not already there
-      const alreadyHighlighted = context.memory.highlightedServices.some(s => s.id === validServiceId);
-      
-      if (!alreadyHighlighted) {
-        // Get the service name from either the provided info or the service name argument
-        const displayName = serviceInfo ? serviceInfo.name : (serviceName || `Service ${validServiceId}`);
+      if (validServiceId) {
+        console.log(`🔍 Processing explicit service ID: ${validServiceId}`);
         
-        // Add to highlighted services
-        context.memory.highlightedServices.push({
-          id: validServiceId,
-          name: displayName,
-          category: serviceInfo ? serviceInfo.category : 'Unknown',
-          price: serviceInfo ? serviceInfo.price : null,
-          highlightedAt: new Date().toISOString()
-        });
+        // Get service info for additional context
+        const services = await getAllFormattedServices();
+        const serviceInfo = services.find(s => s.id === validServiceId);
         
-        console.log(`✅ Service ID "${validServiceId}" highlighted and stored in context as "${displayName}"`);
-      } else {
-        console.log(`ℹ️ Service ID "${validServiceId}" already highlighted`);
+        // Add to highlighted services if not already there
+        const alreadyHighlighted = context.memory.highlightedServices.some(s => s.id === validServiceId);
+        
+        if (!alreadyHighlighted) {
+          // Get the service name from either the provided info or the service name argument
+          const displayName = serviceInfo ? serviceInfo.name : (serviceName || `Service ${validServiceId}`);
+          
+          // Add to highlighted services
+          context.memory.highlightedServices.push({
+            id: validServiceId,
+            name: displayName,
+            category: serviceInfo ? serviceInfo.category : 'Unknown',
+            price: serviceInfo ? serviceInfo.price : null,
+            highlightedAt: new Date().toISOString()
+          });
+          
+          console.log(`✅ Service ID "${validServiceId}" highlighted and stored in context as "${displayName}"`);
+        } else {
+          console.log(`ℹ️ Service ID "${validServiceId}" already highlighted`);
+        }
+        
+        // Always add to detectedServiceIds if not already there
+        if (!context.detectedServiceIds.includes(validServiceId)) {
+          context.detectedServiceIds.push(validServiceId);
+          console.log(`✅ Service ID "${validServiceId}" added to detectedServiceIds`);
+        } else {
+          console.log(`ℹ️ Service ID "${validServiceId}" already in detectedServiceIds`);
+        }
+        
+        return true;
       }
-      
-      // Always add to detectedServiceIds if not already there
-      if (!context.detectedServiceIds.includes(validServiceId)) {
-        context.detectedServiceIds.push(validServiceId);
-        console.log(`✅ Service ID "${validServiceId}" added to detectedServiceIds`);
-      } else {
-        console.log(`ℹ️ Service ID "${validServiceId}" already in detectedServiceIds`);
-      }
-      
-      // Log the current state of the detectedServiceIds array for debugging
-      console.log(`🔍 Current detectedServiceIds: ${JSON.stringify(context.detectedServiceIds)}`);
-      
-      return true;
     }
     
     // If no valid service ID provided, try to find by name
     if (serviceName) {
-      console.log(`🔍 Searching for service by name: "${serviceName}"`);
+      console.log(`🔍 Processing service mention: "${serviceName}"`);
+      
+      // Check if the input contains multiple services separated by commas
+      if (serviceName.includes(',')) {
+        console.log(`🔍 Multiple services detected in: "${serviceName}"`);
+        const serviceNames = serviceName.split(',').map(name => name.trim()).filter(name => name.length > 0);
+        
+        // Process each service name individually
+        let successCount = 0;
+        for (const name of serviceNames) {
+          console.log(`🔍 Processing individual service: "${name}"`);
+          const success = await trackServiceMention(name, context);
+          if (success) successCount++;
+        }
+        
+        return successCount > 0;
+      }
+      
+      // Process single service name
       const service = await getServiceByName(serviceName);
       
       if (service) {
@@ -508,17 +557,19 @@ async function trackServiceMention(serviceName, context, serviceId) {
   }
 }
 
+// Export the initialization function along with other exports
 module.exports = {
-  ListServicesTool,
   fetchServicesFromSOHO,
   getServices,
-  getActiveServices,
-  categorizeServices,
   getAllFormattedServices,
   getServiceById,
   getServiceByName,
   getServiceDuration,
-  highlightService,
   getHighlightedServices,
+  ListServicesTool,
+  initializeServicesCache,
+  getActiveServices,
+  categorizeServices,
+  highlightService,
   trackServiceMention
 }; 

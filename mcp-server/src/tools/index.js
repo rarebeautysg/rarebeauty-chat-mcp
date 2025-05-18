@@ -1,21 +1,20 @@
-// Import tool modules
-const listServices = require('./listServices');
-const getServiceInfo = require('./getServiceInfo');
-const getAvailableSlots = require('./getAvailableSlots');
-const bookAppointment = require('./bookAppointment');
-const lookupUser = require('./lookupUser');
-const createContact = require('./createContact');
-const storeUser = require('./storeUser');
-const suggestServices = require('./suggestServices');
-const scanServices = require('./scanServices');
-const getCustomerAppointments = require('./getCustomerAppointments');
+// Import all tools
 const lookupAndHistory = require('./lookupAndHistory');
+const createContact = require('./createContact');
+const getServiceInfo = require('./getServiceInfo');
+const listServices = require('./listServices');
+const bookAppointment = require('./bookAppointment');
+const storeUser = require('./storeUser');
+const selectServices = require('./selectServices');
+const lookupUser = require('./lookupUser');
+const getAvailableSlots = require('./getAvailableSlots');
+// NOTE: scanServices has been removed
 
 /**
- * Creates tool instances with context for a given session
- * @param {Object} context - The MCP context for the session
- * @param {string} sessionId - The session ID
- * @returns {Array} - Array of tool instances
+ * Create an array of tools for a given context and session
+ * @param {Object} context - The conversation context
+ * @param {string} sessionId - Session ID
+ * @returns {Array} Array of LangChain tools
  */
 function createTools(context, sessionId) {
   const tools = [];
@@ -122,32 +121,22 @@ function createTools(context, sessionId) {
     console.error('❌ Error creating storeUser tool:', error);
   }
   
-  // suggestServices tool
+  // selectServices tool
   try {
-    if (suggestServices.createSuggestServicesTool) {
-      tools.push(suggestServices.createSuggestServicesTool(context, sessionId));
+    if (selectServices.createSelectServicesTool) {
+      tools.push(selectServices.createSelectServicesTool(context, sessionId));
     } else {
-      console.warn('⚠️ SuggestServicesTool could not be created with context');
+      console.warn('⚠️ SelectServicesTool could not be created with context');
     }
   } catch (error) {
-    console.error('❌ Error creating suggestServices tool:', error);
+    console.error('❌ Error creating selectServices tool:', error);
   }
   
-  // scanServices tool
-  try {
-    if (scanServices.createScanServicesTool) {
-      tools.push(scanServices.createScanServicesTool(context, sessionId));
-    } else {
-      console.warn('⚠️ ScanServicesTool could not be created with context');
-    }
-  } catch (error) {
-    console.error('❌ Error creating scanServices tool:', error);
-  }
+  // Note: scanServices has been removed
   
-  // Do NOT register getCustomerAppointments as a separate tool anymore
-  // since it's now integrated with lookupUser
-  // This prevents the LLM from calling it separately and ensures
-  // appointment history is always retrieved automatically
+  // Note: getCustomerAppointments is integrated with lookupAndHistory
+  // and should not be registered as a separate tool
+  
   console.log(`✅ Created tools array with ${tools.length} tools`);
   return tools;
 }

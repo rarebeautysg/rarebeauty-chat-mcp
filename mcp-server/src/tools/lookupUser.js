@@ -8,6 +8,28 @@ let contactsCache = [];
 let lastFetchTime = 0;
 const CACHE_DURATION = 60 * 60 * 1000; // 1 hour cache duration
 
+// Initialize function to be called on server startup
+async function initializeContactsCache() {
+  console.log('📋 initializeContactsCache called');
+  try {
+    // Force fetch contacts from SOHO API
+    const contacts = await fetchContactsFromSoho();
+    
+    if (contacts && contacts.length > 0) {
+      contactsCache = contacts;
+      lastFetchTime = Date.now();
+      console.log(`✅ Initialized contacts cache with ${contacts.length} contacts`);
+      return true;
+    } else {
+      console.error('❌ Failed to initialize contacts cache - no contacts returned');
+      return false;
+    }
+  } catch (error) {
+    console.error('❌ Error initializing contacts cache:', error);
+    return false;
+  }
+}
+
 // Helper to normalize phone numbers
 function normalizePhone(phone) {
   // Handle undefined, null or non-string values
@@ -121,16 +143,29 @@ class LookupUserTool extends StructuredTool {
     console.log(`🚨 LOOKUP TOOL TRIGGERED 🚨`);
     console.log(`📞 Looking up user by phone: ${phoneNumber}`);
     console.log(`🔄 Session ID: ${this.sessionId}`);
+    console.log(`📊 Contact cache status: ${contactsCache.length} contacts, last updated ${lastFetchTime ? Math.floor((Date.now() - lastFetchTime) / 1000 / 60) + ' minutes ago' : 'never'}`);
 
     try {
-      // If cache is still empty after trying to load, return an error
+      // If cache is still empty after trying to load, try fetching one more time directly
       if (contactsCache.length === 0) {
-        console.error('❌ No contacts available - SOHO API may be unavailable');
-        return JSON.stringify({ 
-          error: 'No contacts available',
-          message: 'The contacts database is currently unavailable. Please try again later.'
-        });
+        console.warn('⚠️ Contact cache is empty, attempting to fetch contacts directly');
+        const contacts = await fetchContactsFromSoho();
+        
+        if (contacts && contacts.length > 0) {
+          console.log(`✅ Direct fetch successful, got ${contacts.length} contacts`);
+          contactsCache = contacts;
+          lastFetchTime = Date.now();
+        } else {
+          console.error('❌ No contacts available - SOHO API may be unavailable');
+          return JSON.stringify({ 
+            error: 'No contacts available',
+            message: 'The contacts database is currently unavailable. Please try again later.'
+          });
+        }
       }
+      
+      // Log the cache size for debugging
+      console.log(`📊 Using contacts cache with ${contactsCache.length} records`);
       
       // Normalize the phone number for comparison
       const normalizedInput = normalizePhone(phoneNumber);
@@ -138,11 +173,74 @@ class LookupUserTool extends StructuredTool {
 
       console.log(`🔍 Looking up contact with normalized phone: "${normalizedInput}", last 8: "${lastEightDigits}"`);
       
+      // Prepare alternative formats for search
+      const searchFormats = [
+        phoneNumber,              // Original format
+        `+65${phoneNumber}`,      // With +65 prefix
+        `+${phoneNumber}`,        // With + prefix
+        `65${phoneNumber}`        // With 65 prefix
+      ];
+      
       // Try multiple matching strategies
-      // 1. Exact match
-      let contact = contactsCache.find(c => c.mobile === phoneNumber);
+      let contact = null;
+      
+      // 1. Try exact match with multiple formats
+      console.log('Trying exact match with multiple formats...');
+      for (const format of searchFormats) {
+        contact = contactsCache.find(c => c && c.mobile === format);
+        if (contact) {
+          console.log(`✅ Found exact match with format "${format}": ${contact.name}`);
+          break;
+        }
+      }
+      
+      // 2. If no exact match, try normalized match
+      if (!contact) {
+        console.log('Trying normalized match...');
+        contact = contactsCache.find(c => {
+          if (!c || !c.mobile) return false;
+          const contactNormalized = normalizePhone(c.mobile);
+          return contactNormalized === normalizedInput;
+        });
+        
+        if (contact) {
+          console.log(`✅ Found normalized match: ${contact.name}`);
+        }
+      }
+      
+      // 3. If still no match, try by last 8 digits (common for Singapore numbers)
+      if (!contact) {
+        console.log('Trying last 8 digits match...');
+        contact = contactsCache.find(c => {
+          if (!c || !c.mobile) return false;
+          const contactNormalized = normalizePhone(c.mobile);
+          const contactLastEight = contactNormalized.slice(-8);
+          return contactLastEight === lastEightDigits;
+        });
+        
+        if (contact) {
+          console.log(`✅ Found last-8-digits match: ${contact.name}`);
+        }
+      }
+      
+      // 4. If STILL no match, try a more aggressive approach with partial matching
+      if (!contact && lastEightDigits.length >= 6) {
+        console.log('Trying partial match with last 6+ digits...');
+        const lastSixDigits = lastEightDigits.slice(-6);
+        
+        contact = contactsCache.find(c => {
+          if (!c || !c.mobile) return false;
+          const contactNormalized = normalizePhone(c.mobile);
+          return contactNormalized.endsWith(lastSixDigits);
+        });
+        
+        if (contact) {
+          console.log(`✅ Found partial match with last ${lastSixDigits.length} digits: ${contact.name}`);
+        }
+      }
+      
+      // If we found a contact, update context and return
       if (contact) {
-        console.log(`✅ Found exact match: ${contact.name}`);
         // Update context directly
         this.updateContext(contact);
         return JSON.stringify({
@@ -152,43 +250,8 @@ class LookupUserTool extends StructuredTool {
         });
       }
       
-      // 2. Match after normalizing
-      contact = contactsCache.find(c => {
-        const contactNormalized = normalizePhone(c.mobile);
-        return contactNormalized === normalizedInput;
-      });
-      
-      if (contact) {
-        console.log(`✅ Found normalized match: ${contact.name}`);
-        // Update context directly
-        this.updateContext(contact);
-        return JSON.stringify({ 
-          resourceName: contact.resourceName,
-          name: contact.name,
-          mobile: contact.mobile
-        });
-      }
-      
-      // 3. Match by last 8 digits (common for Singapore numbers)
-      contact = contactsCache.find(c => {
-        const contactNormalized = normalizePhone(c.mobile);
-        const contactLastEight = contactNormalized.slice(-8);
-        return contactLastEight === lastEightDigits;
-      });
-      
-      if (contact) {
-        console.log(`✅ Found last-8-digits match: ${contact.name}`);
-        // Update context directly
-        this.updateContext(contact);
-        return JSON.stringify({
-          resourceName: contact.resourceName,
-          name: contact.name,
-          mobile: contact.mobile
-        });
-      }
-      
-      // No match found
-      console.log(`❌ No contact found with phone: ${phoneNumber}`);
+      // No match found after all attempts
+      console.log(`❌ No contact found with phone: ${phoneNumber} after trying all matching strategies`);
       return JSON.stringify({ 
         error: "No contact found with the provided phone number",
         message: "Please ensure the phone number is correct or contact support to add this customer to the system."
@@ -285,5 +348,6 @@ class LookupUserTool extends StructuredTool {
 // Use CommonJS exports
 module.exports = {
   LookupUserTool,
-  createLookupUserTool: (context, sessionId) => new LookupUserTool(context, sessionId)
+  createLookupUserTool: (context, sessionId) => new LookupUserTool(context, sessionId),
+  initializeContactsCache // Export the initialization function
 };

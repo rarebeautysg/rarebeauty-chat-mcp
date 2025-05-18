@@ -98,8 +98,8 @@ async function createNewMCPContext(sessionId, isAdmin = false) {
       assistantMentionedServices: [] // Services mentioned by the assistant
     },
     tools: isAdmin
-      ? ["lookupUser", "createContact", "listServices", "getServiceInfo", "getAvailableSlots", "bookAppointment", "storeUser", "suggestServices", "scanServices", "getCustomerAppointments"] 
-      : ["lookupUser", "listServices", "getServiceInfo", "getAvailableSlots", "bookAppointment", "storeUser", "suggestServices", "scanServices"],
+      ? ["lookupUser", "createContact", "listServices", "getServiceInfo", "getAvailableSlots", "bookAppointment", "storeUser", "selectServices"] 
+      : ["lookupUser", "listServices", "getServiceInfo", "getAvailableSlots", "bookAppointment", "storeUser", "selectServices"],
     history: [],
     detectedServiceIds: [] // Store service IDs detected in the conversation
   };
@@ -119,14 +119,51 @@ async function createNewMCPContext(sessionId, isAdmin = false) {
 // Helper function to get or create a shared tool instance
 function getSharedTool(toolName, context, sessionId) {
   const key = `${sessionId}:${toolName}`;
+  
   if (!sharedTools.has(key)) {
-    if (toolName === 'scanServices') {
-      const { createScanServicesTool } = require('./src/tools/scanServices');
-      sharedTools.set(key, createScanServicesTool(context, sessionId));
+    console.log(`🔧 Creating new shared tool instance: ${toolName} for session ${sessionId}`);
+    
+    try {
+      if (toolName === 'selectServices') {
+        const { createSelectServicesTool } = require('./src/tools/selectServices');
+        sharedTools.set(key, createSelectServicesTool(context, sessionId));
+      } else if (toolName === 'listServices') {
+        const { ListServicesTool } = require('./src/tools/listServices');
+        sharedTools.set(key, new ListServicesTool(context, sessionId));
+      }
+      // Add other tool types as needed
+    } catch (error) {
+      console.error(`❌ Error creating shared tool ${toolName}:`, error);
+      return null;
     }
-    // Add other tool types as needed
   }
+  
+  // Initialize services cache if this is a service-related tool
+  if ((toolName === 'listServices' || toolName === 'selectServices') && sharedTools.has(key)) {
+    try {
+      // Try to ensure the services cache is initialized
+      const { initializeServicesCache } = require('./src/tools/listServices');
+      initializeServicesCache().catch(err => console.error('Failed to initialize services cache:', err));
+    } catch (error) {
+      console.error('❌ Error initializing services cache:', error);
+    }
+  }
+  
   return sharedTools.get(key);
+}
+
+// Helper: Extract service names from a confirmation message
+function extractServiceNamesFromConfirmation(message) {
+  // Simple regex to extract bullet points or lines like '• Service Name' or '- Service Name'
+  const lines = message.split('\n');
+  const serviceNames = [];
+  for (const line of lines) {
+    const match = line.match(/^\s*[•\-]\s*(.+)$/);
+    if (match) {
+      serviceNames.push(match[1].trim());
+    }
+  }
+  return serviceNames;
 }
 
 // Socket connection handler
@@ -387,28 +424,24 @@ ${messageContent}`;
         context.history.push(assistantMessage);
         mcpContexts.set(sessionId, context);
         
+        // After assistant message is generated and before emitting:
+        // If the assistant message is a confirmation of selected services, auto-call selectServices
+        if (assistantMessage.role === 'assistant' && /added|selected|following services|recap|appointment details/i.test(assistantMessage.content)) {
+          const serviceNames = extractServiceNamesFromConfirmation(assistantMessage.content);
+          if (serviceNames.length > 0) {
+            const selectTool = getSharedTool('selectServices', context, sessionId);
+            if (selectTool) {
+              await selectTool._call({ serviceNames });
+              console.log(`✅ Backend safeguard: called selectServices with confirmed service names:`, serviceNames);
+            }
+          }
+        }
+        
         // Emit back to client
         socket.emit('message', assistantMessage);
         
         // Stop typing indicator
         socket.emit('typing', false);
-        
-        // Scan response for service mentions
-        try {
-          // Use the shared tool instance instead of creating a new one
-          const scanTool = getSharedTool('scanServices', context, sessionId);
-          
-          const scanResult = await scanTool._call({
-            message: responseContent,
-            analyzeOnly: false // Save to context
-          });
-          
-          if (scanResult.serviceMentions && scanResult.serviceMentions.length > 0) {
-            console.log(`🔍 Detected services in assistant response:`, scanResult.serviceMentions);
-          }
-        } catch (scanError) {
-          console.error('❌ Error scanning response for services:', scanError);
-        }
         
         // Persist context memory to DynamoDB if enabled
         try {
