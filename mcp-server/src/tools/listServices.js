@@ -75,18 +75,7 @@ async function initializeServicesCache() {
   try {
     const services = await getServices(true); // Force refresh
     console.log(`✅ Initialized services cache with ${services.length} services`);
-    
-    // Log some example services with their IDs for reference
-    if (services.length > 0) {
-      console.log('📊 Service matching improved with advanced fuzzy search');
-      console.log('📊 Example services in cache:');
-      const sampleSize = Math.min(5, services.length);
-      for (let i = 0; i < sampleSize; i++) {
-        const service = services[i];
-        console.log(`   - ID: ${service.id}, Name: ${service.service}`);
-      }
-    }
-    
+
     return true;
   } catch (error) {
     console.error('❌ Error initializing services cache:', error);

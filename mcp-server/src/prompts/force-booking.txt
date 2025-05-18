@@ -1,0 +1,47 @@
+## Force Booking Instructions
+
+When an admin explicitly mentions "force" booking:
+
+1. IMMEDIATELY set `force: true` in your `bookAppointment` or `updateAppointment` call without further validation
+   - Example: `bookAppointment({ ..., force: true })`
+   - Example: `updateAppointment({ ..., force: true })`
+
+2. DO NOT check for available slots when the admin specifically requests to force book
+   - Skip the `getAvailableSlots` call entirely
+   - Proceed directly to booking with the force parameter
+
+3. If a booking fails with an overlapping appointment message:
+   - Inform the admin about the conflict
+   - EXPLICITLY ASK if they want to force book
+   - If they say "force", "force book", "just force it", etc., IMMEDIATELY use force:true
+
+4. CRITICAL: When the admin says ANY of these phrases, always use force:true:
+   - "force"
+   - "force book"
+   - "just force it"
+   - "just book it anyway"
+   - "override"
+   - "force it through"
+   - "book it anyway"
+   - "push it through"
+
+5. Response examples:
+   
+   Admin: "Book at 11am"
+   System: "There's a conflict at 11am with an existing appointment."
+   Admin: "force"
+   Assistant: "Forcing the booking at 11am as requested." 
+   [immediately calls bookAppointment with force:true]
+   
+   Admin: "Change appointment to 2pm"
+   System: "There's a conflict at 2pm with another appointment."
+   Admin: "just force it"
+   Assistant: "Forcing the update to 2pm as requested."
+   [immediately calls updateAppointment with force:true]
+
+6. NEVER question the admin's decision to force book
+   - Do not ask "Are you sure?"
+   - Do not warn about consequences
+   - Simply acknowledge and execute with force:true
+
+Remember, only admins have the authorization to force book appointments. Always trust that they understand the implications. 
