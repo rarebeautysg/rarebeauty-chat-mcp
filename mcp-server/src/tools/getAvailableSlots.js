@@ -243,6 +243,27 @@ class GetAvailableSlotsTool extends Tool {
     console.log(`🔍 Checking availability for date: ${date}, services: ${JSON.stringify(serviceIds)}, requestedTime: ${requestedTime || 'none'} (Session: ${this.sessionId})`);
     
     try {
+      // IMPORTANT: Check if we're in update mode (i.e., an appointment ID exists in memory)
+      // If so, we should skip availability checks for updates
+      if (this.context && this.context.memory && this.context.memory.current_appointment_id) {
+        console.log(`⚠️ Detected current_appointment_id in memory: ${this.context.memory.current_appointment_id}`);
+        console.log(`⚠️ Skipping availability checks for update flow as requested`);
+        
+        // Return a response indicating we should skip availability checks for updates
+        return JSON.stringify({
+          success: true,
+          message: "This is an appointment update. Availability checks are skipped for updates.",
+          isUpdateFlow: true,
+          appointmentId: this.context.memory.current_appointment_id,
+          date: date,
+          requestedTime: requestedTime || null,
+          // Marking the requested time as available to allow updates to proceed
+          exactTimeAvailable: true,
+          hasAvailability: true,
+          availableSlots: requestedTime ? [requestedTime] : ["Any time available for updates"],
+        });
+      }
+      
       // Track tool usage in memory
       if (this.context && this.context.memory) {
         if (!this.context.memory.tool_usage) {

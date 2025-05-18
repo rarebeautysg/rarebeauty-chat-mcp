@@ -2,7 +2,7 @@ const { ChatOpenAI } = require('@langchain/openai');
 const axios = require('axios');
 
 // Import system prompts from the prompts directory
-const { createAdminSystemPrompt, createCustomerSystemPrompt } = require('./prompts');
+const { createAdminSystemPrompt, createCustomerSystemPrompt, extractAndStoreAppointmentId } = require('./prompts');
 
 // Import the tool factories
 const { createTools } = require('./tools');
@@ -173,6 +173,15 @@ async function getOrCreateExecutor(sessionId, isAdmin = false) {
       console.log(`Executing agent for session ${sessionId} with input: "${input.substring(0, 50)}${input.length > 50 ? '...' : ''}"`);
       
       try {
+        // Extract and store appointment ID from user input if present
+        if (isAdmin && mcpContexts.has(sessionId)) {
+          const context = mcpContexts.get(sessionId);
+          const extractedId = extractAndStoreAppointmentId(context, input);
+          if (extractedId) {
+            console.log(`✅ Extracted appointment ID ${extractedId} from user input at beginning of request`);
+          }
+        }
+        
         // Prepare messages
         const messages = [
           {

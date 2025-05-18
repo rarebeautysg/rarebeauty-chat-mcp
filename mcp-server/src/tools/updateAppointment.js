@@ -106,11 +106,11 @@ function prepareUpdateGraphQLRequest(updateData, formattedStart) {
     resourceName: updateData.resourceName,
     start: formattedStart,
     serviceIds: updateData.serviceIds,
-    duration: parseInt(updateData.duration) || 60,
-    totalAmount: parseFloat(updateData.totalAmount) || 0,
-    additional: parseFloat(updateData.additional) || 0,
-    discount: parseFloat(updateData.discount) || 0,
-    deposit: parseFloat(updateData.deposit) || 0,
+    duration: Number(updateData.duration) || 60,
+    totalAmount: Number(updateData.totalAmount) || 0,
+    additional: Number(updateData.additional) || 0,
+    discount: Number(updateData.discount) || 0,
+    deposit: Number(updateData.deposit) || 0,
     toBeInformed: updateData.toBeInformed !== undefined ? updateData.toBeInformed : false
   };
   
@@ -145,7 +145,7 @@ class UpdateAppointmentTool extends StructuredTool {
   constructor(context, sessionId) {
     super();
     this.name = "updateAppointment";
-    this.description = "Update an existing appointment with new date, time, or services";
+    this.description = "Update an existing appointment with new date, time, or services. DO NOT check for availability or conflicts. MUST include appointmentId in the call.";
     this.schema = UpdateAppointmentSchema;
     
     // Store context and session ID
@@ -181,6 +181,10 @@ class UpdateAppointmentTool extends StructuredTool {
         serviceIds,
         force: false
       });
+      
+      // Store appointmentId in memory as current_appointment_id
+      this.context.memory.current_appointment_id = appointmentId;
+      console.log(`📋 Stored appointment ID ${appointmentId} in memory.current_appointment_id`);
     }
     
     try {

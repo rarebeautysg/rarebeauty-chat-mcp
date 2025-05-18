@@ -3,7 +3,7 @@ const lookupAndHistory = require('./lookupAndHistory');
 const createContact = require('./createContact');
 const getServiceInfo = require('./getServiceInfo');
 const listServices = require('./listServices');
-const bookAppointment = require('./bookAppointment');
+const createAppointment = require('./createAppointment');
 const storeUser = require('./storeUser');
 const selectServices = require('./selectServices');
 const lookupUser = require('./lookupUser');
@@ -64,17 +64,19 @@ function createTools(context, sessionId) {
     console.error('❌ Error creating createContact tool:', error);
   }
   
-  // bookAppointment tool
+  // createAppointment tool
   try {
-    if (bookAppointment.createBookAppointmentTool) {
-      tools.push(bookAppointment.createBookAppointmentTool(context, sessionId));
-    } else if (bookAppointment.BookAppointmentTool) {
-      tools.push(new bookAppointment.BookAppointmentTool(context, sessionId));
+    if (createAppointment.createCreateAppointmentTool) {
+      tools.push(createAppointment.createCreateAppointmentTool(context, sessionId));
+      console.log('✅ Added createAppointment tool');
+    } else if (createAppointment.CreateAppointmentTool) {
+      tools.push(new createAppointment.CreateAppointmentTool(context, sessionId));
+      console.log('✅ Added createAppointment tool using class constructor');
     } else {
-      console.warn('⚠️ BookAppointmentTool could not be created with context');
+      console.warn('⚠️ CreateAppointmentTool could not be created with context');
     }
   } catch (error) {
-    console.error('❌ Error creating bookAppointment tool:', error);
+    console.error('❌ Error creating createAppointment tool:', error);
   }
   
   // listServices tool

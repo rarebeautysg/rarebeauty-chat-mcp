@@ -2,7 +2,7 @@ const { StructuredTool } = require("@langchain/core/tools");
 const { z } = require("zod");
 const { getAllFormattedServices, getServiceDuration, getHighlightedServices } = require('./listServices');
 
-const BookAppointmentSchema = z.object({
+const CreateAppointmentSchema = z.object({
   serviceIds: z.array(z.string()),
   date: z.string(),
   time: z.string(),
@@ -138,12 +138,12 @@ function prepareGraphQLRequest(bookingData, formattedStart) {
     resourceName: bookingData.resourceName,
     start: formattedStart,
     serviceIds: bookingData.serviceIds,
-    duration: bookingData.duration || 60,
-    totalAmount: bookingData.totalAmount || 0,
-    additional: bookingData.additional || 0,
-    discount: bookingData.discount || 0,
+    duration: Number(bookingData.duration) || 60,
+    totalAmount: Number(bookingData.totalAmount) || 0,
+    additional: Number(bookingData.additional) || 0,
+    discount: Number(bookingData.discount) || 0,
     toBeInformed: bookingData.toBeInformed !== undefined ? bookingData.toBeInformed : false,
-    deposit: bookingData.deposit || 0,
+    deposit: Number(bookingData.deposit) || 0,
     force: bookingData.force || false    
   };
   
@@ -174,12 +174,12 @@ function formatDisplayTime(dateObj) {
   return `${hours12}:${minutes} ${isPM ? 'PM' : 'AM'}`;
 }
 
-class BookAppointmentTool extends StructuredTool {
+class CreateAppointmentTool extends StructuredTool {
   constructor(context, sessionId) {
     super();
-    this.name = "bookAppointment";
-    this.description = "Book appointment for one or more services at a given time. Checks availability too.";
-    this.schema = BookAppointmentSchema;
+    this.name = "createAppointment";
+    this.description = "Create an appointment for one or more services at a given time. Checks availability too.";
+    this.schema = CreateAppointmentSchema;
     
     // Store context and session ID
     this.context = context;
@@ -189,7 +189,7 @@ class BookAppointmentTool extends StructuredTool {
   async _call(inputs) {
     const { serviceIds, date, time, name, mobile, resourceName, force, duration, totalAmount, additional, discount, toBeInformed, deposit, notes } = inputs;
 
-    console.log(`🔄 Book appointment request for session: ${this.sessionId}`);
+    console.log(`🔄 Create appointment request for session: ${this.sessionId}`);
     console.log(`📋 Original service IDs provided by AI: ${JSON.stringify(serviceIds)}`);
     
     // Track tool usage in memory
@@ -198,12 +198,12 @@ class BookAppointmentTool extends StructuredTool {
         this.context.memory.tool_usage = {};
       }
       
-      if (!this.context.memory.tool_usage.bookAppointment) {
-        this.context.memory.tool_usage.bookAppointment = [];
+      if (!this.context.memory.tool_usage.createAppointment) {
+        this.context.memory.tool_usage.createAppointment = [];
       }
       
       // Log this booking attempt
-      this.context.memory.tool_usage.bookAppointment.push({
+      this.context.memory.tool_usage.createAppointment.push({
         timestamp: new Date().toISOString(),
         serviceIds,
         date,
@@ -604,17 +604,17 @@ function getSuggestedServices(context) {
 }
 
 /**
- * Creates a bookAppointment tool instance with context
+ * Creates a createAppointment tool instance with context
  * @param {Object} context - The MCP context for the session
  * @param {string} sessionId - The session ID
- * @returns {StructuredTool} - The bookAppointment tool instance
+ * @returns {StructuredTool} - The createAppointment tool instance
  */
-function createBookAppointmentTool(context, sessionId) {
-  return new BookAppointmentTool(context, sessionId);
+function createCreateAppointmentTool(context, sessionId) {
+  return new CreateAppointmentTool(context, sessionId);
 }
 
 module.exports = {
-  BookAppointmentTool,
-  createBookAppointmentTool,
+  CreateAppointmentTool,
+  createCreateAppointmentTool,
   getSuggestedServices
 }; 

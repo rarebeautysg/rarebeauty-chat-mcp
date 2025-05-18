@@ -136,6 +136,10 @@ class GetAppointmentTool extends StructuredTool {
         timestamp: new Date().toISOString(),
         appointmentId
       });
+      
+      // Store appointmentId in memory as current_appointment_id
+      this.context.memory.current_appointment_id = appointmentId;
+      console.log(`📋 Stored appointment ID ${appointmentId} in memory.current_appointment_id`);
     }
     
     try {
