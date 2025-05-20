@@ -1,0 +1,252 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation template for Rare Beauty Chat application'
+
+Parameters:
+  ContainerPort:
+    Type: Number
+    Default: 3002
+    Description: Port on which the container will listen
+  
+  ImageUri:
+    Type: String
+    Description: URI of the Docker image in ECR
+  
+  OpenAIApiKey:
+    Type: String
+    Description: OpenAI API Key
+    NoEcho: true
+  
+  GoogleServiceAccount:
+    Type: String
+    Description: Google Service Account JSON (stringified)
+    NoEcho: true
+  
+  CalendarId:
+    Type: String
+    Description: Google Calendar ID
+  
+  SohoAuthToken:
+    Type: String
+    Description: Soho Auth Token
+    NoEcho: true
+  
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: Select a VPC
+  
+  Subnets:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Select at least two subnets in your VPC
+
+Resources:
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: rarebeauty-cluster
+      CapacityProviders:
+        - FARGATE
+      DefaultCapacityProviderStrategy:
+        - CapacityProvider: FARGATE
+          Weight: 1
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/rarebeauty-chat
+      RetentionInDays: 14
+
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMReadOnlyAccess  # For accessing secrets
+
+  SecretOpenAIApiKey:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: /rarebeauty/openai-api-key
+      Description: OpenAI API Key for Rare Beauty Chat
+      SecretString: !Ref OpenAIApiKey
+
+  SecretGoogleServiceAccount:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: /rarebeauty/google-service-account
+      Description: Google Service Account for Rare Beauty Chat
+      SecretString: !Ref GoogleServiceAccount
+
+  SecretSohoAuthToken:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: /rarebeauty/soho-auth-token
+      Description: Soho Auth Token for Rare Beauty Chat
+      SecretString: !Ref SohoAuthToken
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: rarebeauty-chat-task
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: '1024'
+      Memory: '2048'
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      ContainerDefinitions:
+        - Name: rarebeauty-chat
+          Image: !Ref ImageUri
+          Essential: true
+          PortMappings:
+            - ContainerPort: !Ref ContainerPort
+              HostPort: !Ref ContainerPort
+              Protocol: tcp
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+          Environment:
+            - Name: CALENDAR_ID
+              Value: !Ref CalendarId
+            - Name: NODE_ENV
+              Value: production
+          Secrets:
+            - Name: OPENAI_API_KEY
+              ValueFrom: !Ref SecretOpenAIApiKey
+            - Name: GOOGLE_SERVICE_ACCOUNT
+              ValueFrom: !Ref SecretGoogleServiceAccount
+            - Name: SOHO_AUTH_TOKEN
+              ValueFrom: !Ref SecretSohoAuthToken
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - wget --no-verbose --tries=1 --spider http://localhost:3002/api/health || exit 1
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 60
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Rare Beauty Chat service
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: !Ref ContainerPort
+          ToPort: !Ref ContainerPort
+          CidrIp: 0.0.0.0/0
+
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for ALB
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+
+  ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: rarebeauty-chat-alb
+      Scheme: internet-facing
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: '60'
+      Subnets: !Ref Subnets
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+
+  HTTPListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ALB
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: rarebeauty-chat-tg
+      Port: !Ref ContainerPort
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !Ref VpcId
+      HealthCheckPath: /api/health
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 3
+      UnhealthyThresholdCount: 3
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: '30'
+
+  Service:
+    Type: AWS::ECS::Service
+    DependsOn: HTTPListener
+    Properties:
+      ServiceName: rarebeauty-chat-service
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref TaskDefinition
+      LaunchType: FARGATE
+      DesiredCount: 1
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 100
+        MaximumPercent: 200
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+            - !Ref SecurityGroup
+          Subnets: !Ref Subnets
+      LoadBalancers:
+        - ContainerName: rarebeauty-chat
+          ContainerPort: !Ref ContainerPort
+          TargetGroupArn: !Ref TargetGroup
+
+Outputs:
+  ServiceUrl:
+    Description: URL of the load balancer for the service
+    Value: !Sub http://${ALB.DNSName}
+
+  ECSCluster:
+    Description: ECS Cluster Name
+    Value: !Ref ECSCluster
+
+  ECSService:
+    Description: ECS Service Name
+    Value: !Ref Service
+
+  TaskDefinition:
+    Description: Task Definition ARN
+    Value: !Ref TaskDefinition 
