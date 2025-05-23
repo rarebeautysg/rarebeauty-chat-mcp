@@ -12,20 +12,13 @@ const { getServiceById, getAllFormattedServices } = require('./listServices');
 function createSelectServicesTool(context, sessionId) {
   return {
     name: "selectServices",
-    description: "Store selected services (IDs like (service:XXX) or names like (Lashes - Full Set - Dense) ) for booking.",
+    description: "getting english service names and returning the service ids",
     parameters: {
       type: "object",
       properties: {
-        serviceIds: {
-          type: "array",
-          description: "List of service IDs or names to select",
-          items: {
-            type: "string"
-          }
-        },
         serviceNames: {
           type: "array", 
-          description: "List of service names to select",
+          description: "List of service names that has been selected by the user",
           items: {
             type: "string"
           }

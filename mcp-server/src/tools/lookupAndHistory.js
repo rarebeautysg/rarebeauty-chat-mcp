@@ -12,7 +12,7 @@ const { createGetCustomerAppointmentsTool } = require('./getCustomerAppointments
 class LookupAndHistoryTool extends StructuredTool {
   constructor(context, sessionId) {
     super();
-    this.name = "lookupUser";  // Keep the same name as lookupUser to be a drop-in replacement
+    this.name = "lookupAndHistory";  // Keep the same name as lookupUser to be a drop-in replacement
     this.description = "Find a user by Singapore phone number and automatically retrieve their appointment history";
     this.schema = z.object({
       phoneNumber: z.string().describe("Singapore mobile number to lookup")

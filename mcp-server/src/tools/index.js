@@ -19,7 +19,7 @@ const validateMemory = require('./validateMemory');
  * @param {string} sessionId - Session ID
  * @returns {Array} Array of LangChain tools
  */
-function createTools(context, sessionId) {
+function createTools(context, sessionId, isAdmin) {
   const tools = [];
   
   // Try to create each tool with context and session ID
@@ -30,24 +30,17 @@ function createTools(context, sessionId) {
     if (lookupAndHistory.createLookupAndHistoryTool) {
       tools.push(lookupAndHistory.createLookupAndHistoryTool(context, sessionId));
       console.log('✅ Using combined lookupAndHistory tool with auto-appointment retrieval');
-    } else {
-      console.warn('⚠️ LookupAndHistoryTool not available, falling back to standard lookupUser');
-      if (lookupUser.LookupUserTool) {
-        tools.push(new lookupUser.LookupUserTool(context, sessionId));
-      } else if (lookupUser.createLookupUserTool) {
-        tools.push(lookupUser.createLookupUserTool(context, sessionId));
-      } else {
-        console.warn('⚠️ LookupUserTool could not be created with context');
-      }
-    }
+    } 
   } catch (error) {
     console.error('❌ Error creating lookupAndHistory tool:', error);
-    console.warn('⚠️ Falling back to standard lookupUser');
+    
+    // Try to use lookupUser as fallback
     try {
-      if (lookupUser.LookupUserTool) {
-        tools.push(new lookupUser.LookupUserTool(context, sessionId));
-      } else if (lookupUser.createLookupUserTool) {
+      if (lookupUser.createLookupUserTool) {
         tools.push(lookupUser.createLookupUserTool(context, sessionId));
+        console.log('✅ Using fallback lookupUser tool');
+      } else {
+        console.warn('⚠️ LookupUserTool could not be created with context');
       }
     } catch (fallbackError) {
       console.error('❌ Error creating fallback lookupUser tool:', fallbackError);

@@ -12,6 +12,7 @@ interface SocketContextType {
   sendMessage: (content: string, isAdmin?: boolean) => void;
   loadCustomer: (resourceName: string, isAdmin?: boolean) => void;
   clearContext: () => void;
+  clearHistory: () => void;
   connectionStatus: ConnectionStatus;
   isCustomerLoaded: boolean;
 }
@@ -210,6 +211,17 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({
     welcomeMessageRequestedRef.current = false;
   };
 
+  const clearHistory = () => {
+    if (!socket || !isConnected) {
+      console.warn('⚠️ Cannot clear history: Socket not connected');
+      return;
+    }
+
+    console.log('🧹 Clearing history');
+    socket.emit('clearHistory');
+    setMessages([]);
+  };
+
   const value = {
     socket,
     messages,
@@ -219,6 +231,7 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({
     sendMessage,
     loadCustomer,
     clearContext,
+    clearHistory,
     connectionStatus,
     isCustomerLoaded,
   };

@@ -1,11 +1,15 @@
 const { StructuredTool } = require("@langchain/core/tools");
 const { z } = require("zod");
+const moment = require('moment-timezone');
+const chrono = require('chrono-node');
 const { getAllFormattedServices, getServiceDuration, getHighlightedServices } = require('./listServices');
+
+// Set default timezone for Singapore
+moment.tz.setDefault('Asia/Singapore');
 
 const CreateAppointmentSchema = z.object({
   serviceIds: z.array(z.string()),
-  date: z.string(),
-  time: z.string(),
+  datetime: z.string().describe("Date and time for the appointment. Supports formats like 'YYYYMMDDTHHmm' (e.g., '20250523T1100'), natural language like 'tomorrow 2pm', or ISO format."),
   name: z.string().describe("Name of the person booking"),
   mobile: z.string().describe("Mobile number of the person booking"),
   resourceName: z.string().describe("resourceName of the person booking"),
@@ -67,60 +71,6 @@ async function fetchPublicHolidays() {
   }
 }
 
-// Format the start time for SOHO API (YYYYMMDDTHHmm)
-function formatStartTime(date, time) {
-  try {
-    // Handle date formats
-    let dateObj = new Date();
-    
-    if (date.toLowerCase() === 'today') {
-      // Use today's date
-    } else if (date.toLowerCase() === 'tomorrow') {
-      dateObj.setDate(dateObj.getDate() + 1);
-    } else if (date.toLowerCase().includes('next')) {
-      if (date.toLowerCase().includes('week')) {
-        dateObj.setDate(dateObj.getDate() + 7);
-      } else if (date.toLowerCase().includes('month')) {
-        dateObj.setMonth(dateObj.getMonth() + 1);
-      } else {
-        dateObj.setDate(dateObj.getDate() + 1);
-      }
-    } else {
-      dateObj = new Date(date);
-      if (isNaN(dateObj.getTime())) {
-        return { error: `Invalid date format: ${date}` };
-      }
-    }
-    
-    // Parse the time
-    const parsedTime = time.toLowerCase().replace(/\s/g, '');
-    let hours = 0, minutes = 0;
-    
-    if (parsedTime.includes(':')) {
-      const timeParts = parsedTime.split(':');
-      hours = parseInt(timeParts[0], 10);
-      minutes = parseInt(timeParts[1].replace(/[^0-9]/g, ''), 10);
-      if (parsedTime.includes('pm') && hours < 12) hours += 12;
-      if (parsedTime.includes('am') && hours === 12) hours = 0;
-    } else {
-      hours = parseInt(parsedTime.replace(/[^0-9]/g, ''), 10);
-      if (parsedTime.includes('pm') && hours < 12) hours += 12;
-    }
-    
-    dateObj.setHours(hours, minutes, 0, 0);
-    
-    // Format in YYYYMMDDTHHmm format as required by SOHO API
-    const formattedStart = `${dateObj.getFullYear()}${(dateObj.getMonth()+1).toString().padStart(2, '0')}${dateObj.getDate().toString().padStart(2, '0')}T${dateObj.getHours().toString().padStart(2, '0')}${dateObj.getMinutes().toString().padStart(2, '0')}`;
-    
-    console.log(`📅 Formatted start time: ${formattedStart}`);
-    return { formattedStart, dateObj };
-    
-  } catch (error) {
-    console.error('❌ Error formatting date-time:', error);
-    return { error: 'Invalid date or time format' };
-  }
-}
-
 // Prepare the GraphQL request
 function prepareGraphQLRequest(bookingData, formattedStart) {
   // Define the exact GraphQL mutation as required by SOHO API
@@ -156,24 +106,14 @@ function prepareGraphQLRequest(bookingData, formattedStart) {
   };
 }
 
-// Format date for display
+// Format date for display using Moment
 function formatDisplayDate(dateObj) {
-  return dateObj.toLocaleDateString('en-US', {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric'
-  });
+  return moment(dateObj).format('dddd, MMMM D, YYYY');
 }
 
-// Format time for display
+// Format time for display using Moment
 function formatDisplayTime(dateObj) {
-  const hours24 = dateObj.getHours();
-  const minutes = dateObj.getMinutes().toString().padStart(2, '0');
-  const isPM = hours24 >= 12;
-  const hours12 = hours24 % 12 || 12;
-  
-  return `${hours12}:${minutes} ${isPM ? 'PM' : 'AM'}`;
+  return moment(dateObj).format('h:mm A');
 }
 
 class CreateAppointmentTool extends StructuredTool {
@@ -189,7 +129,7 @@ class CreateAppointmentTool extends StructuredTool {
   }
 
   async _call(inputs) {
-    const { serviceIds, date, time, name, mobile, resourceName, force, duration, totalAmount, additional, discount, toBeInformed, deposit, notes } = inputs;
+    const { serviceIds, datetime, name, mobile, resourceName, force, duration, totalAmount, additional, discount, toBeInformed, deposit, notes } = inputs;
 
     console.log(`🔄 Create appointment request for session: ${this.sessionId}`);
     console.log(`📋 Original service IDs provided by AI: ${JSON.stringify(serviceIds)}`);
@@ -208,8 +148,9 @@ class CreateAppointmentTool extends StructuredTool {
       this.context.memory.tool_usage.createAppointment.push({
         timestamp: new Date().toISOString(),
         serviceIds,
-        date,
-        time
+        datetime,
+        name,
+        mobile
       });
       
       // Check if any services in serviceIds match highlighted services
@@ -227,7 +168,7 @@ class CreateAppointmentTool extends StructuredTool {
             const highlightedService = this.context.memory.highlightedServices.find(s => s.id === id);
             if (highlightedService) {
               highlightedService.bookedAt = new Date().toISOString();
-              highlightedService.bookingDetails = { date, time, name, mobile };
+              highlightedService.bookingDetails = { datetime, name, mobile };
             }
           });
         }
@@ -248,18 +189,22 @@ class CreateAppointmentTool extends StructuredTool {
         // Store the entire array of selected services
         this.context.memory.last_selected_services = parsedIds;
       }
-      if (date) this.context.memory.preferred_date = date;
-      if (time) this.context.memory.preferred_time = time;
+      if (datetime) this.context.memory.preferred_datetime = datetime;
     }
     
     // Process service IDs and add validation/fallback mechanism
     let serviceIdArray = [];
     
-    // Check if we have detected service IDs in the context (local context only)
+          // Check if we have detected service IDs in the context (local context only)
     let contextServiceIds = [];
     if (this.context?.detectedServiceIds?.length > 0) {
       contextServiceIds = [...this.context.detectedServiceIds]; // Create a copy of the array
       console.log(`🔍 Found ${contextServiceIds.length} detected service IDs in context: ${JSON.stringify(contextServiceIds)}`);
+    }
+    
+    // Store datetime in memory for future reference if available
+    if (datetime) {
+      this.context.memory.last_datetime = datetime;
     }
     
     // STRICT VALIDATION: Only use service IDs from AI if they match our detected services exactly
@@ -370,10 +315,64 @@ class CreateAppointmentTool extends StructuredTool {
     }
 
     console.log('📅 Booking appointment with inputs:', inputs);
+    console.log(`📅 Original datetime input: "${datetime}"`);
+    
+    // Validate datetime using Moment.js and Chrono
+    let momentDate;
+    let isNaturalLanguage = false;
+    
+    // Try parsing with chrono (natural language)
+    try {
+      const chronoParsed = chrono.parseDate(datetime);
+      if (chronoParsed) {
+        console.log(`📅 Parsed with chrono natural language: ${chronoParsed.toISOString()}`);
+        momentDate = moment(chronoParsed);
+        isNaturalLanguage = true;
+      }
+    } catch (e) {
+      console.log(`❌ Failed to parse with chrono: ${e.message}`);
+    }
+    
+    // If not natural language, try our other parsing methods
+    if (!isNaturalLanguage) {
+      // Check if datetime is in YYYYMMDDTHHmm format
+      if (/^\d{8}T\d{4}$/.test(datetime)) {
+        // Parse with Moment using a custom format
+        momentDate = moment(datetime, "YYYYMMDD[T]HHmm");
+        console.log(`📅 Parsed as YYYYMMDDTHHmm format: ${momentDate.format()}`);
+      } else {
+        // Try standard formats with Moment
+        momentDate = moment(datetime);
+        console.log(`📅 Parsed with Moment flexible parsing: ${momentDate.format()}`);
+      }
+    }
+    
+    // Check if the date is valid
+    if (!momentDate.isValid()) {
+      console.log('❌ Invalid datetime format');
+      return JSON.stringify({
+        success: false,
+        error: 'Invalid datetime format',
+        message: 'Please provide a valid date and time for your appointment.'
+      });
+    }
+    
+    // Check if the appointment is in the past
+    const now = moment();
+    if (momentDate.isBefore(now)) {
+      console.log('❌ Appointment time is in the past:', momentDate.format());
+      return JSON.stringify({
+        success: false,
+        error: 'Invalid appointment time',
+        message: 'Appointments cannot be made in the past. Please choose a future date and time.'
+      });
+    }
+    
+    // Convert to JavaScript Date object for compatibility
+    const validDateObj = momentDate.toDate();
     
     // Check if requested date is a Sunday
-    const requestedDate = new Date(date);
-    if (!isNaN(requestedDate.getTime()) && requestedDate.getDay() === 0) {
+    if (momentDate.day() === 0) {
       console.log('❌ Booking attempted for Sunday, which is closed');
       return JSON.stringify({
         success: false,
@@ -383,7 +382,7 @@ class CreateAppointmentTool extends StructuredTool {
     }
     
     // Check if requested date is a public holiday
-    const formattedDateStr = requestedDate.toISOString().split('T')[0];
+    const formattedDateStr = momentDate.format('YYYY-MM-DD');
     const publicHolidays = await fetchPublicHolidays();
     const holidayMatch = publicHolidays.find(holiday => holiday.date === formattedDateStr);
     
@@ -396,16 +395,11 @@ class CreateAppointmentTool extends StructuredTool {
       });
     }
 
-    // Format start time for SOHO API
-    const timeResult = formatStartTime(date, time);
-    if (timeResult.error) {
-      return JSON.stringify({
-        success: false,
-        error: timeResult.error
-      });
-    }
+    // Format start time for SOHO API using Moment
+    const formattedStart = momentDate.format('YYYYMMDD[T]HHmm');
+    const dateObj = validDateObj;
     
-    const { formattedStart, dateObj } = timeResult;
+    console.log(`📅 Formatted start time: ${formattedStart}`);
 
     // Use servicIdArray directly - no more modifications to IDs
     const processedServiceIds = serviceIdArray;
@@ -621,4 +615,4 @@ module.exports = {
   CreateAppointmentTool,
   createCreateAppointmentTool,
   getSuggestedServices
-}; 
+};
