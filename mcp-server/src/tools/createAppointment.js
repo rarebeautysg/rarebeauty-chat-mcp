@@ -195,7 +195,7 @@ class CreateAppointmentTool extends StructuredTool {
     // Process service IDs and add validation/fallback mechanism
     let serviceIdArray = [];
     
-          // Check if we have detected service IDs in the context (local context only)
+    // Check if we have detected service IDs in the context (local context only)
     let contextServiceIds = [];
     if (this.context?.detectedServiceIds?.length > 0) {
       contextServiceIds = [...this.context.detectedServiceIds]; // Create a copy of the array
@@ -207,7 +207,7 @@ class CreateAppointmentTool extends StructuredTool {
       this.context.memory.last_datetime = datetime;
     }
     
-    // STRICT VALIDATION: Only use service IDs from AI if they match our detected services exactly
+    // NEW: Enhanced service ID processing with automatic service name mapping
     if (serviceIds) {
       // Parse serviceIds from AI (could be array or string)
       const parsedServiceIds = Array.isArray(serviceIds) 
@@ -217,57 +217,100 @@ class CreateAppointmentTool extends StructuredTool {
       // Log original service IDs from the AI
       console.log(`📋 Parsed service IDs from AI input: ${JSON.stringify(parsedServiceIds)}`);
       
-      // Check if any of the provided service IDs are in an invalid format
-      const invalidServiceIds = parsedServiceIds.filter(id => 
+      // Check if these look like service names instead of IDs
+      const lookLikeServiceNames = parsedServiceIds.some(id => 
         !id.startsWith('service:') && 
-        !/^service:\d+(-\d+)?$/.test(id)
+        (id.includes(' ') || id.includes('-') && !id.match(/^service:\d+(-\d+)?$/))
       );
       
-      if (invalidServiceIds.length > 0) {
-        console.warn(`❌ Invalid service ID format detected: ${JSON.stringify(invalidServiceIds)}`);
-        console.warn(`Expected format: "service:XX-YYYY" (e.g., "service:2-2024")`);
+      if (lookLikeServiceNames) {
+        console.log(`🔄 Detected service names instead of IDs, attempting to map them...`);
         
-        return JSON.stringify({
-          success: false,
-          error: 'Invalid service ID format',
-          message: `The service IDs provided (${invalidServiceIds.join(', ')}) are not in the correct format. Please use the selectServices tool first to properly identify services by name, then the system will provide the correct service IDs for booking.`
-        });
-      }
-      
-      // ONLY use service IDs that match exactly with detected context IDs
-      const validServiceIds = parsedServiceIds.filter(id => {
-        // Check for exact match with our detected services
-        if (contextServiceIds.includes(id)) {
-          console.log(`✅ Validated AI-provided service ID ${id} - found in detected services`);
-          return true;
-        }
-        
-        console.log(`⚠️ Ignoring AI-provided service ID ${id} - not found in detected services`);
-        return false;
-      });
-      
-      // Use only validated IDs
-      serviceIdArray = validServiceIds;
-      
-      // If none of the provided IDs matched, log a warning and provide helpful guidance
-      if (serviceIdArray.length === 0 && parsedServiceIds.length > 0) {
-        console.warn(`⚠️ None of the ${parsedServiceIds.length} AI-provided service IDs matched our detected services`);
-        console.warn(`AI provided: ${JSON.stringify(parsedServiceIds)}`);
-        console.warn(`Context has: ${JSON.stringify(contextServiceIds)}`);
-        
-        // If the service IDs look properly formatted but just don't match, it might be a service selection issue
-        const properlyFormattedIds = parsedServiceIds.filter(id => /^service:\d+(-\d+)?$/.test(id));
-        if (properlyFormattedIds.length === parsedServiceIds.length) {
+        try {
+          // Get all available services to map names to IDs
+          const allServices = await getAllFormattedServices();
+          console.log(`📋 Loaded ${allServices.length} services for mapping`);
+          
+          const mappedServiceIds = [];
+          
+          for (const serviceName of parsedServiceIds) {
+            // Find matching service by name (case-insensitive, partial match)
+            const matchedService = allServices.find(service => {
+              const serviceLower = serviceName.toLowerCase().trim();
+              const serviceNameLower = (service.name || '').toLowerCase();
+              const serviceDescLower = (service.description || '').toLowerCase();
+              
+              return serviceNameLower.includes(serviceLower) || 
+                     serviceDescLower.includes(serviceLower) ||
+                     serviceLower.includes(serviceNameLower);
+            });
+            
+            if (matchedService) {
+              mappedServiceIds.push(matchedService.id);
+              console.log(`✅ Mapped "${serviceName}" to service ID: ${matchedService.id} (${matchedService.name})`);
+            } else {
+              console.warn(`❌ Could not map service name "${serviceName}" to a service ID`);
+            }
+          }
+          
+          if (mappedServiceIds.length > 0) {
+            serviceIdArray = mappedServiceIds;
+            console.log(`✅ Successfully mapped ${mappedServiceIds.length} service names to IDs: ${JSON.stringify(serviceIdArray)}`);
+          } else {
+            return JSON.stringify({
+              success: false,
+              error: 'Failed to map service names to IDs',
+              message: `Could not find service IDs for the provided service names: ${parsedServiceIds.join(', ')}. Please ensure the service names are correct.`
+            });
+          }
+          
+        } catch (error) {
+          console.error('❌ Error mapping service names to IDs:', error);
           return JSON.stringify({
             success: false,
-            error: 'Service IDs not found in context',
-            message: `The service IDs ${parsedServiceIds.join(', ')} were not found in the conversation context. Please use the selectServices tool first to identify which services the customer wants.`
+            error: 'Failed to map service names',
+            message: 'There was an error mapping the service names to service IDs. Please try again.'
           });
+        }
+      } else {
+        // These look like proper service IDs, but still validate them
+        console.log(`📋 Processing service IDs (not names): ${JSON.stringify(parsedServiceIds)}`);
+        
+        // Check if any of the provided service IDs are in an invalid format
+        const invalidServiceIds = parsedServiceIds.filter(id => 
+          !id.startsWith('service:') && 
+          !/^service:\d+(-\d+)?$/.test(id)
+        );
+        
+        if (invalidServiceIds.length > 0) {
+          console.warn(`❌ Invalid service ID format detected: ${JSON.stringify(invalidServiceIds)}`);
+          console.warn(`Expected format: "service:XX-YYYY" (e.g., "service:2-2024")`);
+          
+          return JSON.stringify({
+            success: false,
+            error: 'Invalid service ID format',
+            message: `The service IDs provided (${invalidServiceIds.join(', ')}) are not in the correct format. Expected format: service:XXX`
+          });
+        }
+        
+        // RELAXED VALIDATION: Allow properly formatted service IDs even if not in context
+        // This allows the system to work when service names are mapped directly
+        serviceIdArray = parsedServiceIds;
+        console.log(`📋 Using provided service IDs: ${JSON.stringify(serviceIdArray)}`);
+        
+        // Optional: Still validate against context if available
+        if (contextServiceIds.length > 0) {
+          const validatedIds = parsedServiceIds.filter(id => contextServiceIds.includes(id));
+          if (validatedIds.length > 0) {
+            console.log(`✅ ${validatedIds.length} service IDs validated against context`);
+          } else {
+            console.log(`⚠️ Service IDs not found in context, but proceeding with properly formatted IDs`);
+          }
         }
       }
     }
     
-    // If no valid service IDs from AI input, use all detected service IDs from context
+    // If no service IDs from AI input, fall back to context or memory
     if (serviceIdArray.length === 0 && contextServiceIds.length > 0) {
       console.log(`🔄 Using all ${contextServiceIds.length} detected service IDs from context`);
       serviceIdArray = contextServiceIds;

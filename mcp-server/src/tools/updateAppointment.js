@@ -161,7 +161,7 @@ class UpdateAppointmentTool extends StructuredTool {
     console.log(`🔄 Update appointment request for session: ${this.sessionId}`);
     console.log(`📋 Appointment ID: ${appointmentId}`);
     console.log(`📋 New date and time: ${date} at ${time}`);
-    console.log(`📋 Service IDs: ${JSON.stringify(serviceIds)}`);
+    console.log(`📋 Service IDs received: ${JSON.stringify(serviceIds)}`);
     
     // Track tool usage in memory
     if (this.context && this.context.memory) {
@@ -243,22 +243,97 @@ class UpdateAppointmentTool extends StructuredTool {
       
       const { formattedStart, dateObj } = timeResult;
       
-      // Process service IDs if not already done
+      // NEW: Enhanced service ID processing with service name mapping
       if (serviceIdsArray.length === 0 && serviceIds) {
+        console.log(`📋 Processing provided service IDs: ${JSON.stringify(serviceIds)}`);
+        
+        let rawServiceIds = [];
         if (Array.isArray(serviceIds)) {
-          serviceIdsArray = serviceIds;
+          rawServiceIds = serviceIds;
         } else if (typeof serviceIds === 'string') {
           // Handle comma-separated string
           if (serviceIds.includes(',')) {
-            serviceIdsArray = serviceIds.split(',').map(id => id.trim());
+            rawServiceIds = serviceIds.split(',').map(id => id.trim());
           } else {
             // Single service ID
-            serviceIdsArray = [serviceIds.trim()];
+            rawServiceIds = [serviceIds.trim()];
           }
+        }
+        
+        console.log(`📋 Raw service IDs parsed: ${JSON.stringify(rawServiceIds)}`);
+        
+        // Check if these look like service names instead of IDs
+        const lookLikeServiceNames = rawServiceIds.some(id => 
+          !id.startsWith('service:') && 
+          (id.includes(' ') || id.includes('-') && !id.match(/^service:\d+(-\d+)?$/))
+        );
+        
+        if (lookLikeServiceNames) {
+          console.log(`🔄 Detected service names instead of IDs, attempting to map them...`);
+          
+          try {
+            // Get all available services to map names to IDs
+            const allServices = await getAllFormattedServices();
+            console.log(`📋 Loaded ${allServices.length} services for mapping`);
+            
+            const mappedServiceIds = [];
+            
+            for (const serviceName of rawServiceIds) {
+              // Find matching service by name (case-insensitive, partial match)
+              const matchedService = allServices.find(service => {
+                const serviceLower = serviceName.toLowerCase().trim();
+                const serviceNameLower = (service.name || '').toLowerCase();
+                const serviceDescLower = (service.description || '').toLowerCase();
+                
+                return serviceNameLower.includes(serviceLower) || 
+                       serviceDescLower.includes(serviceLower) ||
+                       serviceLower.includes(serviceNameLower);
+              });
+              
+              if (matchedService) {
+                mappedServiceIds.push(matchedService.id);
+                console.log(`✅ Mapped "${serviceName}" to service ID: ${matchedService.id} (${matchedService.name})`);
+              } else {
+                console.warn(`❌ Could not map service name "${serviceName}" to a service ID`);
+              }
+            }
+            
+            if (mappedServiceIds.length > 0) {
+              serviceIdsArray = mappedServiceIds;
+              console.log(`✅ Successfully mapped ${mappedServiceIds.length} service names to IDs: ${JSON.stringify(serviceIdsArray)}`);
+            } else {
+              return JSON.stringify({
+                success: false,
+                error: 'Failed to map service names to IDs',
+                message: `Could not find service IDs for the provided service names: ${rawServiceIds.join(', ')}. Please ensure the service names are correct.`
+              });
+            }
+            
+          } catch (error) {
+            console.error('❌ Error mapping service names to IDs:', error);
+            return JSON.stringify({
+              success: false,
+              error: 'Failed to map service names',
+              message: 'There was an error mapping the service names to service IDs. Please try again.'
+            });
+          }
+        } else {
+          // These already look like proper service IDs
+          serviceIdsArray = rawServiceIds;
+          console.log(`📋 Using provided service IDs as-is: ${JSON.stringify(serviceIdsArray)}`);
         }
       }
       
-      console.log(`📋 Final service IDs: ${JSON.stringify(serviceIdsArray)}`);
+      console.log(`📋 Final service IDs for update: ${JSON.stringify(serviceIdsArray)}`);
+      
+      // Validate that we have service IDs
+      if (serviceIdsArray.length === 0) {
+        return JSON.stringify({
+          success: false,
+          error: 'No service IDs provided',
+          message: 'Please provide service IDs for the appointment update.'
+        });
+      }
       
       // Calculate total duration if not provided
       if (!appointmentDuration && serviceIdsArray.length > 0) {

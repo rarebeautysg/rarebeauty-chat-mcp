@@ -12,6 +12,25 @@ try {
 }
 
 /**
+ * Get the appropriate welcome message for the admin based on context
+ * @param {Object} context - The MCP context
+ * @param {Object} dateInfo - Date information 
+ * @returns {string} The welcome message to display
+ */
+function getAdminWelcomeMessage(context = {}, dateInfo) {
+  const userInfo = context.memory?.user_info || null;
+  const hasAppointmentId = !!context.memory?.current_appointment_id;
+  
+  if (hasAppointmentId) {
+    return "Welcome back, Admin. I have an appointment loaded. How can I help you update it?";
+  } else if (userInfo) {
+    return `Welcome, Admin. I have ${userInfo.name} loaded. How can I assist you with this customer?`;
+  } else {
+    return "Welcome, Admin. Can I have the customer's mobile number or name so I can better help you?";
+  }
+}
+
+/**
  * Get formatted services context for inclusion in the prompt
  * @returns {string} Formatted services information or empty string if not available
  */
@@ -66,6 +85,50 @@ function unifiedSystemPrompt(context = {}, dateInfo) {
   const appointmentId = context.memory?.current_appointment_id || null;
   const currentAppointment = context.memory?.current_appointment || null;
   
+  // NEW: Check for explicit booking intent in recent messages
+  const recentMessages = context.history ? context.history.slice(-2) : [];
+  const hasBookingIntent = recentMessages.some(msg => {
+    if (msg.role === 'user') {
+      const content = msg.content.toLowerCase();
+      return content.includes('book') || 
+             content.includes('schedule') || 
+             content.includes('new appointment') ||
+             content.includes('make an appointment') ||
+             content.includes('create appointment') ||
+             content.includes('appointment for') ||
+             content.includes('book for') ||
+             content.includes('schedule for') ||
+             content.includes('set up') ||
+             content.includes('arrange') ||
+             content.includes('want to book') ||
+             content.includes('would like to book') ||
+             content.includes('need to book') ||
+             content.includes('book an appointment');
+    }
+    return false;
+  });
+  
+  // NEW: Check for explicit update intent in recent messages
+  const hasUpdateIntent = recentMessages.some(msg => {
+    if (msg.role === 'user') {
+      const content = msg.content.toLowerCase();
+      return content.includes('update') || 
+             content.includes('change') || 
+             content.includes('modify') || 
+             content.includes('reschedule') ||
+             content.includes('move the appointment') ||
+             content.includes('update the appointment') ||
+             content.includes('change the appointment') ||
+             content.includes('edit') ||
+             content.includes('alter') ||
+             content.includes('switch') ||
+             content.includes('move to') ||
+             content.includes('push to') ||
+             content.includes('shift to');
+    }
+    return false;
+  });
+  
   // Format user info for display
   let userInfoDisplay = 'No customer selected';
   if (userInfo) {
@@ -95,7 +158,10 @@ function unifiedSystemPrompt(context = {}, dateInfo) {
 
   // Determine which mode we're in
   const hasUserInfo = !!userInfo;
-  const hasAppointmentId = !!appointmentId;
+  
+  // UPDATED LOGIC: Only go into update mode if there's explicit update intent OR explicit appointment ID mention
+  // Don't go into update mode just because current_appointment_id exists from a lookup
+  const shouldUseUpdateMode = appointmentId && (hasUpdateIntent || (!hasBookingIntent && !hasUserInfo));
   
   // Base prompt elements that are the same in all modes
   const basePrompt = `
@@ -112,6 +178,7 @@ You are the **Admin Assistant** for Rare Beauty Professional salon.
 
 🛠️ **AVAILABLE TOOLS**
 - **lookupAndHistory**: Find customer by phone number and retrieve appointment history
+- **searchCustomers**: Search for customers by name (partial or full name matching). When multiple results are shown, users can type the number (1, 2, 3, etc.) to select a specific customer
 - **createContact**: Create new customer record
 - **listServices**: Show available salon services
 - **selectServices**: Record services for booking
@@ -132,11 +199,33 @@ ${servicesContext}
 
   // Service selection rules
   const serviceRules = `
-### SERVICE SELECTION RULES:
-1. When services are mentioned, first use \`listServices\` to find the correct service names and IDs
-2. Then use \`selectServices\` with the proper serviceIds (format: 'service:XXX')
-3. Never guess service IDs - always look them up first
-4. Only use serviceIds in the tool calls - never use service names directly
+### ⚠️ CRITICAL SERVICE SELECTION RULES:
+**ALWAYS FOLLOW THIS EXACT ORDER:**
+
+1. **FIRST**: When services are mentioned, use \`listServices\` to find available services
+2. **SECOND**: Use \`selectServices\` with the service names to get proper service IDs
+3. **THIRD**: Only then use \`createAppointment\` with the service IDs returned by selectServices
+
+**NEVER:**
+- Pass service names directly to createAppointment 
+- Guess service IDs
+- Skip the selectServices step
+- Use service descriptions as service IDs
+
+**EXAMPLE FLOW:**
+User: "Book Lashes - Full Set and Threading"
+1. Call \`selectServices({ serviceNames: ["Lashes - Full Set - Dense", "Threading - Eyebrow"] })\`
+2. Get back service IDs like ["service:123", "service:456"] 
+3. Use those IDs in \`createAppointment({ serviceIds: ["service:123", "service:456"], ... })\`
+
+**REMEMBER**: Service IDs must be in format 'service:XXX', not service names!
+
+### 🔄 HANDLING SERVICES FROM EXISTING APPOINTMENTS:
+When admin says "use her last appointment services", "use services from her February appointment", or references ANY existing appointment for copying:
+1. **FIRST**: Call \`selectServices\` with the service names from the referenced appointment
+2. **WAIT**: Get the proper service IDs back from selectServices  
+3. **THEN**: Use those service IDs in createAppointment
+**NEVER** skip selectServices even if you know the service names from appointment history!
 `;
 
   // Current context display
@@ -146,11 +235,11 @@ ${servicesContext}
 - Services: ${servicesDisplay}
 - Preferred date: ${preferredDate || 'Not set'}
 - Preferred time: ${preferredTime || 'Not set'}
-${hasAppointmentId ? `- Appointment ID: ${appointmentId}` : ''}
+${appointmentId ? `- Latest appointment ID available: ${appointmentId}` : ''}
 `;
 
   // Different content based on the mode
-  if (hasAppointmentId) {
+  if (shouldUseUpdateMode) {
     // Update appointment mode
     return `${basePrompt}
 
@@ -170,7 +259,8 @@ ${appointmentDetailsDisplay}
 ## 3. UPDATE SERVICE (if needed)
 - If services need to be changed:
   - Use \`listServices\` to get the latest available services
-  - Then use \`selectServices\` with the correct serviceIds
+  - **MANDATORY**: Use \`selectServices\` with the correct service names to get proper service IDs
+  - **WAIT**: Do not proceed to updateAppointment until you have proper service IDs from selectServices
 
 ## 4. UPDATE DATE & TIME (if needed)
 - For new date/time, use \`getAvailableSlots\` to check availability
@@ -190,8 +280,9 @@ ${serviceRules}`;
 ### INITIAL INSTRUCTIONS:
 
 - Begin every conversation with "Hi Admin" to acknowledge you're speaking to salon staff
-- Ask for the customer's mobile number to start the booking process
+- Ask for the customer's mobile number OR name to start the booking process
 - Use \`lookupAndHistory\` to find existing customers by phone number
+- If you only have a customer's name (not phone), use \`searchCustomers\` to find them by name
 - If customer not found, use \`createContact\` to create a new customer record
 - Proceed to appointment creation after identifying the customer
 ${toolsAndInfo}`;
@@ -202,15 +293,14 @@ ${toolsAndInfo}`;
 ### APPOINTMENT CREATION PROCESS:
 
 ## 1. CUSTOMER IDENTIFICATION
-- Ask for customer's mobile number
-- Use \`lookupAndHistory\` tool with the phone number
-- If customer found: Use their information for booking
-- If not found: Ask for full name and use \`createContact\` to register them
+- Customer already identified: ${userInfo.name} (${userInfo.mobile})
+- Ready to proceed with new appointment booking
 
 ## 2. SERVICE SELECTION
 - Ask what services the customer wants
 - Use \`listServices\` to find available services matching their request
-- Use \`selectServices\` with the appropriate serviceIds to record selections
+- **MANDATORY**: Use \`selectServices\` with the appropriate service names to record selections and get service IDs
+- **WAIT**: Do not proceed to createAppointment until you have proper service IDs from selectServices
 
 ## 3. DATE & TIME SELECTION
 - Ask for preferred date and time
@@ -225,6 +315,10 @@ ${toolsAndInfo}`;
   - Total duration and price
 - Get explicit confirmation before creating the appointment
 - Use \`createAppointment\` with all required parameters
+
+### 📝 IMPORTANT NOTE:
+${appointmentId ? `This customer has recent appointments. This will be a NEW appointment, not an update to appointment ${appointmentId}.` : ''}
+To update an existing appointment, the admin must explicitly mention "update", "change", or "modify" the appointment.
 ${toolsAndInfo}
 ${contextDisplay}
 ${serviceRules}`;
@@ -261,5 +355,6 @@ async function createSystemPrompt(context = {}, dateInfo) {
 }
 
 module.exports = {
-  createSystemPrompt
+  createSystemPrompt,
+  getAdminWelcomeMessage
 };

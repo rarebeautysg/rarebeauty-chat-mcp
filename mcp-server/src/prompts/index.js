@@ -1,5 +1,5 @@
 // Export system prompt creators from one centralized file
-const { createSystemPrompt: createAdminSystemPrompt } = require('./systemPrompt-admin');
+const { createSystemPrompt: createAdminSystemPrompt, getAdminWelcomeMessage } = require('./admin');
 const { createSystemPrompt: createCustomerSystemPrompt } = require('./systemPrompt-customer');
 
 // Function to extract and store appointment IDs from user input
@@ -31,5 +31,6 @@ function extractAndStoreAppointmentId(context, userInput) {
 module.exports = {
   createAdminSystemPrompt,
   createCustomerSystemPrompt,
-  extractAndStoreAppointmentId
+  extractAndStoreAppointmentId,
+  getAdminWelcomeMessage
 }; 

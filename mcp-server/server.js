@@ -91,7 +91,7 @@ async function createNewMCPContext(sessionId, isAdmin = false) {
     },
     goals: [],
     instructions: isAdmin 
-      ? "Help admin manage customer appointments, lookup customers, show services and add new contacts."
+      ? "Help admin manage customer appointments, lookup customers by phone or search by name, show services and add new contacts."
       : "Help customer book appointments and learn about services.",
     memory: existingMemory.memory || {
       user_info: null,
@@ -102,8 +102,8 @@ async function createNewMCPContext(sessionId, isAdmin = false) {
       assistantMentionedServices: [] // Services mentioned by the assistant
     },
     tools: isAdmin
-      ? ["lookupUser", "createContact", "listServices", "getServiceInfo", "getAvailableSlots", "bookAppointment", "storeUser", "selectServices"] 
-      : ["lookupUser", "listServices", "getServiceInfo", "getAvailableSlots", "bookAppointment", "storeUser", "selectServices"],
+      ? ["lookupUser", "createContact", "listServices", "getServiceInfo", "getAvailableSlots", "bookAppointment", "storeUser", "selectServices", "searchCustomers"] 
+      : ["lookupUser", "listServices", "getServiceInfo", "getAvailableSlots", "bookAppointment", "storeUser", "selectServices", "searchCustomers"],
     history: [],
     detectedServiceIds: [] // Store service IDs detected in the conversation
   };
@@ -227,9 +227,31 @@ io.on('connection', (socket) => {
     context.memory.goals = ["initiate_conversation"];
     mcpContexts.set(sessionId, context);
     
-    const welcomeMessage = isAdmin 
-      ? "Welcome, Admin. Can I have the customer's mobile number so I can better help you?"
-      : "Hello there! How are you doing today? Can I have your mobile number so I can better help you?";
+    // Generate welcome message dynamically based on context
+    let welcomeMessage;
+    if (isAdmin) {
+      const { getAdminWelcomeMessage } = require('./src/prompts/systemPrompt-admin');
+      const dateInfo = {
+        formattedDate: new Date().toLocaleDateString('en-US', {
+          year: 'numeric',
+          month: 'long', 
+          day: 'numeric'
+        }),
+        todayStatus: new Date().getDay() === 0 ? "Today is Sunday and we are CLOSED." : "We are OPEN today."
+      };
+      welcomeMessage = getAdminWelcomeMessage(context, dateInfo);
+    } else {
+      const { getCustomerWelcomeMessage } = require('./src/prompts/systemPrompt-customer');
+      const dateInfo = {
+        formattedDate: new Date().toLocaleDateString('en-US', {
+          year: 'numeric',
+          month: 'long', 
+          day: 'numeric'
+        }),
+        todayStatus: new Date().getDay() === 0 ? "Today is Sunday and we are CLOSED." : "We are OPEN today."
+      };
+      welcomeMessage = getCustomerWelcomeMessage(context, dateInfo);
+    }
     
     socket.emit('message', {
       role: 'assistant',

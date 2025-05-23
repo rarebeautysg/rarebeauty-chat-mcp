@@ -206,8 +206,25 @@ const systemPrompt = createSystemPrompt({}, {
   todayStatus: new Date().getDay() === 0 ? "Today is Sunday and we are CLOSED." : "We are OPEN today."
 });
 
+/**
+ * Get the appropriate welcome message for customers based on context
+ * @param {Object} context - The MCP context
+ * @param {Object} dateInfo - Date information 
+ * @returns {string} The welcome message to display
+ */
+function getCustomerWelcomeMessage(context = {}, dateInfo) {
+  const userInfo = context.memory?.user_info || null;
+  
+  if (userInfo) {
+    return `Hello ${userInfo.name}! Welcome back to Rare Beauty. How can I assist you today?`;
+  } else {
+    return "Hello there! How are you doing today? Can I have your mobile number so I can better help you?";
+  }
+}
+
 // Export the function
 module.exports = {
   createSystemPrompt,
-  systemPrompt
+  systemPrompt,
+  getCustomerWelcomeMessage
 };

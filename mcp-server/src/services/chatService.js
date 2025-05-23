@@ -194,7 +194,7 @@ class ChatService {
     
     // Create the LLM with streaming disabled
     const llm = new ChatOpenAI({
-      modelName: "gpt-4",
+      modelName: "gpt-4o-mini",
       temperature: 0,
       streaming: false
     });

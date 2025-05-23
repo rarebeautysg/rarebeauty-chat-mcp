@@ -133,7 +133,27 @@ io.on('connection', (socket) => {
     
     let welcomeMsg = "Hello! How can I help you today?";
     if (isAdmin) {
-      welcomeMsg = "Hi Admin, can I have your customer's mobile number to begin?";
+      const { getAdminWelcomeMessage } = require('./prompts/systemPrompt-admin');
+      const dateInfo = {
+        formattedDate: new Date().toLocaleDateString('en-US', {
+          year: 'numeric',
+          month: 'long', 
+          day: 'numeric'
+        }),
+        todayStatus: new Date().getDay() === 0 ? "Today is Sunday and we are CLOSED." : "We are OPEN today."
+      };
+      welcomeMsg = getAdminWelcomeMessage(context, dateInfo);
+    } else {
+      const { getCustomerWelcomeMessage } = require('./prompts/systemPrompt-customer');
+      const dateInfo = {
+        formattedDate: new Date().toLocaleDateString('en-US', {
+          year: 'numeric',
+          month: 'long', 
+          day: 'numeric'
+        }),
+        todayStatus: new Date().getDay() === 0 ? "Today is Sunday and we are CLOSED." : "We are OPEN today."
+      };
+      welcomeMsg = getCustomerWelcomeMessage(context, dateInfo);
     }
     
     socket.emit('message', { 

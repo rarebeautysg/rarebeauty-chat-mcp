@@ -11,6 +11,7 @@ const selectServices = require('./selectServices');
 const lookupUser = require('./lookupUser');
 const getAvailableSlots = require('./getAvailableSlots');
 const validateMemory = require('./validateMemory');
+const searchCustomers = require('./searchCustomers');
 // NOTE: scanServices has been removed
 
 /**
@@ -158,6 +159,18 @@ function createTools(context, sessionId, isAdmin) {
     }
   } catch (error) {
     console.error('❌ Error creating selectServices tool:', error);
+  }
+  
+  // searchCustomers tool
+  try {
+    if (searchCustomers.createSearchCustomersTool) {
+      tools.push(searchCustomers.createSearchCustomersTool(context, sessionId));
+      console.log('✅ Added searchCustomers tool');
+    } else {
+      console.warn('⚠️ SearchCustomersTool could not be created with context');
+    }
+  } catch (error) {
+    console.error('❌ Error creating searchCustomers tool:', error);
   }
   
   // validateMemory tool
