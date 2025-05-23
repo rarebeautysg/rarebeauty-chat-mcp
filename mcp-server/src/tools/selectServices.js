@@ -22,6 +22,13 @@ function createSelectServicesTool(context, sessionId) {
           items: {
             type: "string"
           }
+        },
+        services: {
+          type: "array", 
+          description: "Alternative parameter name for service names that has been selected by the user",
+          items: {
+            type: "string"
+          }
         }
       }
     },
@@ -33,11 +40,12 @@ function createSelectServicesTool(context, sessionId) {
       const allServices = await getAllFormattedServices();
       console.log(`📋 Working with ${allServices.length} available services`);
       
-      // Process whatever input we received (either serviceIds or serviceNames)
-      const servicesToProcess = args.serviceIds || args.serviceNames || [];
+      // Process whatever input we received (serviceIds, serviceNames, or services)
+      const servicesToProcess = args.serviceIds || args.serviceNames || args.services || [];
       
       if (servicesToProcess.length === 0) {
         console.warn('⚠️ No services provided to selectServices tool');
+        console.warn('Available parameters:', Object.keys(args));
         return { selected: [], unmatched: [] };
       }
       
@@ -99,6 +107,31 @@ function createSelectServicesTool(context, sessionId) {
           continue;
         }
         
+        // If still no match, try word-based matching for better fuzzy matching
+        const inputWords = trimmedInput.toLowerCase().split(/[\s\-_]+/).filter(w => w.length > 1);
+        if (inputWords.length > 0) {
+          const wordMatches = allServices.filter(s => {
+            const serviceWords = s.name.toLowerCase().split(/[\s\-_]+/);
+            // Check if all input words appear in the service name
+            return inputWords.every(inputWord => 
+              serviceWords.some(serviceWord => 
+                serviceWord.includes(inputWord) || inputWord.includes(serviceWord)
+              )
+            );
+          });
+          
+          if (wordMatches.length > 0) {
+            const bestMatch = wordMatches[0];
+            selectedServices.push({
+              id: bestMatch.id,
+              name: bestMatch.name
+            });
+            console.log(`✅ Word-based match: "${trimmedInput}" → ${bestMatch.name} (${bestMatch.id})`);
+            console.log(`   Matched words: ${inputWords.join(', ')}`);
+            continue;
+          }
+        }
+        
         // If still no match, add to unmatched services
         console.log(`❌ No match found for: "${trimmedInput}"`);
         unmatchedServices.push(trimmedInput);
@@ -134,6 +167,25 @@ function createSelectServicesTool(context, sessionId) {
           console.log(`⚠️ Unmatched services: ${unmatchedServices.join(', ')}`);
         }
       }
+      
+      // IMPORTANT: Also add selected service IDs to detectedServiceIds array
+      // Initialize detectedServiceIds array if it doesn't exist
+      if (!context.detectedServiceIds) {
+        context.detectedServiceIds = [];
+        console.log('✅ Initialized detectedServiceIds array in selectServices');
+      }
+      
+      // Add selected service IDs to detectedServiceIds
+      for (const service of uniqueSelectedServices) {
+        if (!context.detectedServiceIds.includes(service.id)) {
+          context.detectedServiceIds.push(service.id);
+          console.log(`✅ Service ID "${service.id}" added to detectedServiceIds from selectServices`);
+        } else {
+          console.log(`ℹ️ Service ID "${service.id}" already in detectedServiceIds`);
+        }
+      }
+      
+      console.log(`🔍 Updated detectedServiceIds: ${JSON.stringify(context.detectedServiceIds)}`);
       
       return { 
         selected: uniqueSelectedServices,

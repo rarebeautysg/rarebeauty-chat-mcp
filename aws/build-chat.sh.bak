@@ -13,6 +13,15 @@ AWS_ACCOUNT_ID="292376945194"
 # Change to Chat server directory
 cd "$(dirname "$0")/../chat-server"
 
+echo "✅ Production environment file created: .env.production"
+
+# Verify the content of .env.production
+echo "Content of .env.production:"
+cat .env.production
+
+# Change to Chat server directory
+cd "$(dirname "$0")/../chat-server"
+
 # Create production environment file
 echo "Creating production environment file..."
 cat > .env.production << EOL

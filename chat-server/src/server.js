@@ -39,6 +39,54 @@ app.get('/health', (req, res) => {
   res.status(200).send('OK');
 });
 
+// Detailed health check endpoint with environment variables
+app.get('/health/detailed', (req, res) => {
+  // Create a sanitized copy of environment variables
+  const sanitizedEnv = {};
+  Object.keys(process.env).sort().forEach(key => {
+    // Redact sensitive values
+    if (key.includes('SECRET') || key.includes('KEY') || key.includes('TOKEN') || key.includes('PASSWORD')) {
+      sanitizedEnv[key] = '[REDACTED]';
+    } else {
+      sanitizedEnv[key] = process.env[key];
+    }
+  });
+  
+  // Build response with useful debugging information
+  const healthData = {
+    status: 'OK',
+    timestamp: new Date().toISOString(),
+    server: {
+      mcp_server_url: MCP_SERVER_URL,
+      port: PORT || 3002,
+      node_env: process.env.NODE_ENV || 'not set'
+    },
+    socket: {
+      connected: io ? true : false,
+      options: {
+        transports: ['websocket', 'polling'],
+        cors: 'enabled'
+      }
+    },
+    environment: sanitizedEnv,
+    connection_check: {
+      mcp_reachable: null // Will be populated below
+    }
+  };
+  
+  // Test if MCP server is reachable
+  axios.get(`${MCP_SERVER_URL}/health`, { timeout: 2000 })
+    .then(() => {
+      healthData.connection_check.mcp_reachable = true;
+      res.status(200).json(healthData);
+    })
+    .catch(error => {
+      healthData.connection_check.mcp_reachable = false;
+      healthData.connection_check.error = error.message;
+      res.status(200).json(healthData);
+    });
+});
+
 // API proxy layer - Proxy all API requests to MCP server
 app.use('/api', async (req, res) => {
   try {

@@ -217,6 +217,23 @@ class CreateAppointmentTool extends StructuredTool {
       // Log original service IDs from the AI
       console.log(`📋 Parsed service IDs from AI input: ${JSON.stringify(parsedServiceIds)}`);
       
+      // Check if any of the provided service IDs are in an invalid format
+      const invalidServiceIds = parsedServiceIds.filter(id => 
+        !id.startsWith('service:') && 
+        !/^service:\d+(-\d+)?$/.test(id)
+      );
+      
+      if (invalidServiceIds.length > 0) {
+        console.warn(`❌ Invalid service ID format detected: ${JSON.stringify(invalidServiceIds)}`);
+        console.warn(`Expected format: "service:XX-YYYY" (e.g., "service:2-2024")`);
+        
+        return JSON.stringify({
+          success: false,
+          error: 'Invalid service ID format',
+          message: `The service IDs provided (${invalidServiceIds.join(', ')}) are not in the correct format. Please use the selectServices tool first to properly identify services by name, then the system will provide the correct service IDs for booking.`
+        });
+      }
+      
       // ONLY use service IDs that match exactly with detected context IDs
       const validServiceIds = parsedServiceIds.filter(id => {
         // Check for exact match with our detected services
@@ -232,9 +249,21 @@ class CreateAppointmentTool extends StructuredTool {
       // Use only validated IDs
       serviceIdArray = validServiceIds;
       
-      // If none of the provided IDs matched, log a warning
+      // If none of the provided IDs matched, log a warning and provide helpful guidance
       if (serviceIdArray.length === 0 && parsedServiceIds.length > 0) {
         console.warn(`⚠️ None of the ${parsedServiceIds.length} AI-provided service IDs matched our detected services`);
+        console.warn(`AI provided: ${JSON.stringify(parsedServiceIds)}`);
+        console.warn(`Context has: ${JSON.stringify(contextServiceIds)}`);
+        
+        // If the service IDs look properly formatted but just don't match, it might be a service selection issue
+        const properlyFormattedIds = parsedServiceIds.filter(id => /^service:\d+(-\d+)?$/.test(id));
+        if (properlyFormattedIds.length === parsedServiceIds.length) {
+          return JSON.stringify({
+            success: false,
+            error: 'Service IDs not found in context',
+            message: `The service IDs ${parsedServiceIds.join(', ')} were not found in the conversation context. Please use the selectServices tool first to identify which services the customer wants.`
+          });
+        }
       }
     }
     

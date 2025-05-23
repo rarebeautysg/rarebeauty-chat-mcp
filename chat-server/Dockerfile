@@ -17,6 +17,9 @@ COPY . .
 ENV NODE_ENV production
 ENV NEXT_TELEMETRY_DISABLED 1
 
+# Copy environment variables for production build
+COPY .env.production .env.production
+
 RUN npm run build
 
 # Production image, copy all the files and run next
@@ -33,6 +36,8 @@ RUN adduser --system --uid 1001 nextjs
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+# Copy environment file
+COPY --from=builder /app/.env.production ./.env.production
 
 USER nextjs
 

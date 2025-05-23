@@ -12,9 +12,8 @@ class ChatService {
     // Store executors in memory keyed by session ID
     this.executors = new Map();
     this.adminExecutors = new Map();
-    // Create maps to store contexts
+    // Create a single map to store all contexts
     this.contexts = new Map();
-    this.adminContexts = new Map();
     // Flag to track if history was fixed during processing
     this.historyWasFixed = false;
   }
@@ -175,14 +174,14 @@ class ChatService {
     }
     
     // Store the context for future reference
-    const contextMap = isAdmin ? this.adminContexts : this.contexts;
-    contextMap.set(sessionId, context);
+    this.contexts.set(sessionId, context);
     
     // Get date info for prompt generation
     const dateInfo = this.getDateInfo();
     
     // Create the system prompt using the appropriate function - now handling async
-    const systemPromptFunction = isAdmin ? 
+    const isContextAdmin = context.memory?.admin_mode === true;
+    const systemPromptFunction = isContextAdmin ? 
       require('../prompts/systemPrompt-admin').createSystemPrompt : 
       require('../prompts/systemPrompt-customer').createSystemPrompt;
     
@@ -190,7 +189,7 @@ class ChatService {
     const systemMessage = await systemPromptFunction(context.toJSON(), dateInfo);
     
     // Create context-aware tools
-    const tools = createTools(context.toJSON(), sessionId, isAdmin);
+    const tools = createTools(context.toJSON(), sessionId, isContextAdmin);
     console.log(`Creating agent for session ${sessionId} with ${tools.length} tools`);
     
     // Create the LLM with streaming disabled
@@ -405,6 +404,17 @@ class ChatService {
                 try {
                   // Try with a clean slate
                   const cleanResponse = await llm.invoke(cleanedMessages);
+                  
+                  // Add the assistant response to context
+                  try {
+                    context.addMessage({
+                      role: "assistant",
+                      content: cleanResponse.content || responseContent
+                    });
+                  } catch (error) {
+                    console.error(`Error adding final assistant response to context: ${error.message}`);
+                  }
+                  
                   return { output: cleanResponse.content || responseContent };
                 } catch (cleanError) {
                   console.error('Error even with clean history:', cleanError);
@@ -413,8 +423,8 @@ class ChatService {
               }
             }
             
-            // Debug print the messages
-            console.log('Final messages:', JSON.stringify(finalMessages.slice(-5), null, 2));
+            // Debug print the messages - moved this to after final response is added
+            // console.log('Final messages:', JSON.stringify(finalMessages.slice(-5), null, 2));
             
             // Get final response using normal LLM
             console.log('Getting final response after tool calls');
@@ -460,6 +470,16 @@ class ChatService {
               
               const finalResponse = await llm.invoke(langChainMessages);
               responseContent = finalResponse.content || responseContent;
+              
+              // Ensure we add the final assistant response to the context
+              context.addMessage({
+                role: "assistant",
+                content: responseContent
+              });
+              console.log(`Added final assistant response to context: "${responseContent.substring(0, 50)}${responseContent.length > 50 ? '...' : ''}"`);
+              
+              // Debug print the complete conversation history after all responses are added
+              console.log('Final conversation history:', JSON.stringify(context.history?.slice(-7) || [], null, 2));
             } catch (error) {
               console.error('Error getting final response:', error);
               
@@ -486,24 +506,42 @@ class ChatService {
                   const cleanResponse = await llm.invoke(cleanedMessages);
                   responseContent = cleanResponse.content || responseContent;
                   console.log('Successfully got response with cleaned history');
+                  
+                  // Add the clean response to context
+                  context.addMessage({
+                    role: "assistant",
+                    content: responseContent
+                  });
+                  console.log(`Added cleaned assistant response to context: "${responseContent.substring(0, 50)}${responseContent.length > 50 ? '...' : ''}"`);
+                  
+                  // Debug print the complete conversation history after cleaned response
+                  console.log('Final conversation history (cleaned):', JSON.stringify(context.history?.slice(-7) || [], null, 2));
                 } catch (cleanError) {
                   console.error('Error even with cleaned history:', cleanError);
                   responseContent = "I'm sorry, I encountered an issue while processing your request. Please try again.";
+                  
+                  // Add error response to context
+                  context.addMessage({
+                    role: "assistant",
+                    content: responseContent
+                  });
+                  
+                  // Debug print the complete conversation history after error response
+                  console.log('Final conversation history (error):', JSON.stringify(context.history?.slice(-7) || [], null, 2));
                 }
               } else {
                 // For other errors, use a default response
                 responseContent = "I'm sorry, I encountered an issue while processing your request. Please try again.";
+                
+                // Add error response to context
+                context.addMessage({
+                  role: "assistant",
+                  content: responseContent
+                });
+                
+                // Debug print the complete conversation history after error response
+                console.log('Final conversation history (general error):', JSON.stringify(context.history?.slice(-7) || [], null, 2));
               }
-            }
-            
-            // Add final assistant response to context
-            try {
-              context.addMessage({
-                role: "assistant",
-                content: responseContent
-              });
-            } catch (error) {
-              console.error(`Error adding final assistant response to context: ${error.message}`);
             }
           } else {
             // No tool calls, just add the assistant response to context
@@ -512,6 +550,10 @@ class ChatService {
                 role: "assistant",
                 content: responseContent
               });
+              console.log(`Added assistant response to context (no tools): "${responseContent.substring(0, 50)}${responseContent.length > 50 ? '...' : ''}"`);
+              
+              // Debug print the complete conversation history for no-tool responses
+              console.log('Final conversation history (no tools):', JSON.stringify(context.history?.slice(-7) || [], null, 2));
             } catch (error) {
               console.error(`Error adding assistant response to context: ${error.message}`);
             }
@@ -538,10 +580,7 @@ class ChatService {
    * @param {boolean} isAdmin - Whether this is an admin session
    * @returns {Promise<Object>} The response and updated context
    */
-  async processMessage(sessionId, mcpContext, message, isAdmin = false) {
-    // Get the appropriate context map
-    const contextMap = isAdmin ? this.adminContexts : this.contexts;
-    
+  async processMessage(sessionId, mcpContext, message, isAdmin = false) {    
     // Ensure we have a valid context
     const context = mcpContext || new MCPContext();
     
@@ -551,18 +590,27 @@ class ChatService {
     // Extract message content
     const messageContent = typeof message === 'string' ? message : (message.content || '');
     
-    // Add the message to the context
-    try {
-      context.addMessage({ role: 'user', content: messageContent });
-    } catch (error) {
-      console.error(`Error adding user message to context: ${error.message}`);
+    // Check if this exact message was already added recently to prevent duplicates
+    const isDuplicateMessage = this.isRecentDuplicateMessage(context, messageContent);
+    
+    if (!isDuplicateMessage) {
+      // Add the message to the context only if it's not a duplicate
+      try {
+        context.addMessage({ role: 'user', content: messageContent });
+        console.log(`✅ Added new user message to context: "${messageContent.substring(0, 50)}${messageContent.length > 50 ? '...' : ''}"`);
+      } catch (error) {
+        console.error(`Error adding user message to context: ${error.message}`);
+      }
+    } else {
+      console.log(`🔄 Skipping duplicate user message: "${messageContent.substring(0, 50)}${messageContent.length > 50 ? '...' : ''}"`);
     }
     
     // Store context for this session
-    contextMap.set(sessionId, context);
+    this.contexts.set(sessionId, context);
     
     // Get the executor for this session
-    const executor = await this.getExecutor(sessionId, context, isAdmin);
+    const isContextAdmin = context.memory?.admin_mode === true;
+    const executor = await this.getExecutor(sessionId, context, isContextAdmin);
     
     // Process the message
     let response;
@@ -576,7 +624,7 @@ class ChatService {
     }
     
     // Store the updated context
-    contextMap.set(sessionId, context);
+    this.contexts.set(sessionId, context);
     
     // If we fixed history, persist the changes to DynamoDB
     if (this.historyWasFixed) {
@@ -601,6 +649,52 @@ class ChatService {
       response: { content: response.output },
       updatedContext: context.toJSON()
     };
+  }
+
+  /**
+   * Check if a user message is a recent duplicate in the context
+   * @param {MCPContext} context - The conversation context
+   * @param {string} messageContent - The message content to check
+   * @returns {boolean} - True if the message is a recent duplicate
+   */
+  isRecentDuplicateMessage(context, messageContent) {
+    if (!context || !context.history || !Array.isArray(context.history) || context.history.length === 0) {
+      return false;
+    }
+    
+    // Check the last few messages (last 3) to see if this exact user message exists
+    const recentMessages = context.history.slice(-3);
+    
+    for (const msg of recentMessages) {
+      if (msg.role === 'user' && msg.content === messageContent) {
+        return true;
+      }
+    }
+    
+    return false;
+  }
+
+  /**
+   * Check if a user message is a duplicate of the last user message in the context
+   * @param {MCPContext} context - The conversation context
+   * @param {string} messageContent - The message content to check
+   * @returns {boolean} - True if the message is a duplicate
+   */
+  isDuplicateUserMessage(context, messageContent) {
+    if (!context || !context.history || !Array.isArray(context.history) || context.history.length === 0) {
+      return false;
+    }
+    
+    // Find the last user message in the history
+    for (let i = context.history.length - 1; i >= 0; i--) {
+      const msg = context.history[i];
+      if (msg.role === 'user') {
+        // Compare with current message content
+        return msg.content === messageContent;
+      }
+    }
+    
+    return false;
   }
 
   /**
@@ -683,16 +777,13 @@ class ChatService {
   /**
    * Clear conversation history for a session
    * @param {string} sessionId - The session ID
-   * @param {boolean} isAdmin - Whether this is an admin session
+   * @param {boolean} isAdmin - Whether this is an admin session (parameter kept for backward compatibility)
    * @returns {Promise<boolean>} - Success indicator
    */
   async clearHistory(sessionId, isAdmin = false) {
     try {
-      // Get the appropriate context map
-      const contextMap = isAdmin ? this.adminContexts : this.contexts;
-      
       // Get the context for this session
-      const context = contextMap.get(sessionId);
+      const context = this.contexts.get(sessionId);
       
       if (!context) {
         console.warn(`No context found for session ${sessionId}`);
@@ -706,7 +797,7 @@ class ChatService {
       context.lastUpdated = new Date().toISOString();
       
       // Store the updated context
-      contextMap.set(sessionId, context);
+      this.contexts.set(sessionId, context);
       
       // Persist to DynamoDB if available
       const memoryService = require('./memoryService');

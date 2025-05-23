@@ -58,14 +58,20 @@ function getContextBySessionId(sessionId, isAdmin = false) {
     // Create new context if it doesn't exist
     const newContext = new MCPContext({ memory: { admin_mode: isAdmin } });
     sessionContexts.set(sessionId, newContext);
+    console.log(`🆕 Created new context for session ${sessionId}, admin: ${isAdmin}`);
     return newContext;
   }
   
   // Return existing context but ensure admin mode is set correctly
   const context = sessionContexts.get(sessionId);
+  
+  // Ensure admin mode is set correctly
   if (isAdmin && !context.memory.admin_mode) {
     context.memory.admin_mode = true;
+    console.log(`🔑 Updated admin_mode to true for existing context ${sessionId}`);
   }
+  
+  console.log(`🔄 Retrieved existing context for session ${sessionId}, history length: ${context.history?.length || 0}`);
   return context;
 }
 

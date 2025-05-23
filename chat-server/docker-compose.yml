@@ -9,6 +9,7 @@ services:
       - "3002:3002"
     environment:
       - NODE_ENV=production
+      - NEXT_PUBLIC_MCP_URL=${NEXT_PUBLIC_MCP_URL:-https://mcp.salon.sg}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - GOOGLE_SERVICE_ACCOUNT=${GOOGLE_SERVICE_ACCOUNT}
       - CALENDAR_ID=${CALENDAR_ID}
